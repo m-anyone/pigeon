@@ -47,12 +47,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     tracing::info!(port = listener.local_addr()?.port(), "Pigeon listening");
-    let result = axum::serve(
-        listener,
-        http::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown())
-    .await;
+    let result = axum::serve(listener, http::router(state))
+        .with_graceful_shutdown(shutdown())
+        .await;
     cleanup.abort();
     result?;
     Ok(())

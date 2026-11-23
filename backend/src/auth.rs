@@ -12,10 +12,12 @@ use crate::cooldown::PasswordCooldown;
 
 const SESSION_LIFETIME: Duration = Duration::from_secs(180 * 24 * 60 * 60);
 const MAX_SESSIONS: usize = 4096;
+const MAX_UNKNOWN_USERNAMES: usize = 8192;
 
 pub struct Auth {
     accounts: HashMap<String, [u8; 32]>,
     attempts: Mutex<PasswordCooldown<[u8; 32]>>,
+    unknown_attempts: Mutex<PasswordCooldown<[u8; 32]>>,
     sessions: Mutex<HashMap<[u8; 32], Session>>,
 }
 
@@ -39,7 +41,9 @@ impl Auth {
             .collect();
         Self {
             accounts,
-            attempts: Mutex::new(PasswordCooldown::default()),
+            attempts: Mutex::new(PasswordCooldown::new(None)),
+            // Track unconfigured names separately to preserve configured accounts' capacity.
+            unknown_attempts: Mutex::new(PasswordCooldown::new(Some(MAX_UNKNOWN_USERNAMES))),
             sessions: Mutex::new(HashMap::new()),
         }
     }
@@ -49,14 +53,18 @@ impl Auth {
     }
 
     fn login_at(&self, username: &str, password: &str, now: Instant) -> Result<String, LoginError> {
-        // Share one deadline for each claimed username regardless of the source IP.
-        self.attempts
+        let stored = self.accounts.get(username);
+        let attempts = if stored.is_some() {
+            &self.attempts
+        } else {
+            &self.unknown_attempts
+        };
+        attempts
             .lock()
             .expect("login cooldown mutex")
             .check(digest(username), now)
             .map_err(LoginError::PasswordCooldown)?;
 
-        let stored = self.accounts.get(username);
         let valid = digest(password).ct_eq(stored.unwrap_or(&[0; 32]));
         if !bool::from(valid) || stored.is_none() {
             return Err(LoginError::Invalid);
@@ -113,6 +121,26 @@ fn digest(value: &str) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_username_capacity_is_separate_from_configured_accounts() {
+        let mut auth = Auth::new(HashMap::from([
+            ("alice".into(), "password".into()),
+            ("bob".into(), "secret".into()),
+        ]));
+        auth.unknown_attempts = Mutex::new(PasswordCooldown::new(Some(1)));
+        let start = Instant::now();
+        assert!(matches!(
+            auth.login_at("unknown", "wrong", start),
+            Err(LoginError::Invalid)
+        ));
+        assert!(matches!(
+            auth.login_at("another-unknown", "wrong", start),
+            Err(LoginError::PasswordCooldown(_))
+        ));
+        assert!(auth.login_at("alice", "password", start).is_ok());
+        assert!(auth.login_at("bob", "secret", start).is_ok());
+    }
 
     #[test]
     fn rate_limits_each_claimed_username_after_valid_or_invalid_passwords() {

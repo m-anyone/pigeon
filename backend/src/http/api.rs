@@ -1,8 +1,8 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{ConnectInfo, Path, State, rejection::JsonRejection},
+    extract::{Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
 use serde::Deserialize;
@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use crate::auth::LoginError;
 
-use super::{App, error::HttpError, peer, storage_work};
+use super::{App, error::HttpError, storage_work};
 
 #[derive(Deserialize)]
 pub struct Credentials {
@@ -25,12 +25,8 @@ pub struct Extraction {
 
 pub async fn login(
     State(app): State<Arc<App>>,
-    connect: ConnectInfo<SocketAddr>,
     payload: Result<Json<Credentials>, JsonRejection>,
 ) -> Result<Json<Value>, HttpError> {
-    if !app.login_limit.attempt(peer(connect)) {
-        return Err(HttpError::limited());
-    }
     let Json(credentials) = payload.map_err(|_| HttpError::invalid())?;
     let token = app
         .auth
@@ -74,7 +70,6 @@ pub async fn storage(
 
 pub async fn extract_link(
     State(app): State<Arc<App>>,
-    connect: ConnectInfo<SocketAddr>,
     Path(id): Path<String>,
     payload: Result<Json<Extraction>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), HttpError> {
@@ -84,9 +79,6 @@ pub async fn extract_link(
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     {
         return Err(HttpError::missing());
-    }
-    if !app.extraction_limit.attempt((peer(connect), id.clone())) {
-        return Err(HttpError::limited());
     }
     let Json(extraction) = payload.map_err(|_| HttpError::invalid())?;
     let store = app.store.clone();

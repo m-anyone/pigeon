@@ -5,24 +5,23 @@ use std::{
 };
 
 const INTERVAL: Duration = Duration::from_secs(3);
-const MAX_TRACKED_KEYS: usize = 8192;
 
 /// Keeps a monotonic deadline for each credential being verified.
 pub struct PasswordCooldown<K> {
     allowed_at: HashMap<K, Instant>,
     next_cleanup: Option<Instant>,
-}
-
-impl<K> Default for PasswordCooldown<K> {
-    fn default() -> Self {
-        Self {
-            allowed_at: HashMap::new(),
-            next_cleanup: None,
-        }
-    }
+    key_limit: Option<usize>,
 }
 
 impl<K: Eq + Hash> PasswordCooldown<K> {
+    pub fn new(key_limit: Option<usize>) -> Self {
+        Self {
+            allowed_at: HashMap::new(),
+            next_cleanup: None,
+            key_limit,
+        }
+    }
+
     pub fn check(&mut self, key: K, now: Instant) -> Result<(), Duration> {
         let deadline = now + INTERVAL;
         if self.next_cleanup.is_none_or(|cleanup| now >= cleanup) {
@@ -37,8 +36,10 @@ impl<K: Eq + Hash> PasswordCooldown<K> {
             }
             *allowed_at = deadline;
         } else {
-            // Claimed usernames can come from unauthenticated requests.
-            if self.allowed_at.len() >= MAX_TRACKED_KEYS {
+            if self
+                .key_limit
+                .is_some_and(|limit| self.allowed_at.len() >= limit)
+            {
                 return Err(INTERVAL);
             }
             self.allowed_at.insert(key, deadline);
@@ -54,7 +55,7 @@ mod tests {
     #[test]
     fn spaces_checks_and_keeps_each_key_independent() {
         let start = Instant::now();
-        let mut cooldown = PasswordCooldown::default();
+        let mut cooldown = PasswordCooldown::new(None);
         assert_eq!(cooldown.check("alice", start), Ok(()));
         assert_eq!(cooldown.check("bob", start), Ok(()));
         assert_eq!(
@@ -63,5 +64,14 @@ mod tests {
         );
         assert_eq!(cooldown.check("alice", start + INTERVAL), Ok(()));
         assert_eq!(cooldown.check("alice", start + INTERVAL), Err(INTERVAL),);
+    }
+
+    #[test]
+    fn applies_a_key_limit_only_when_configured() {
+        let start = Instant::now();
+        let mut bounded = PasswordCooldown::new(Some(1));
+        assert_eq!(bounded.check("alice", start), Ok(()));
+        assert_eq!(bounded.check("bob", start), Err(INTERVAL));
+        assert_eq!(bounded.check("bob", start + INTERVAL), Ok(()));
     }
 }

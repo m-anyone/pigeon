@@ -2,43 +2,30 @@ mod api;
 mod download;
 mod error;
 mod pages;
-mod rate;
 mod shares;
 mod upload;
 
-use std::{
-    collections::HashMap,
-    io,
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-    time::Instant,
-};
+use std::{collections::HashMap, io, sync::Arc, time::Instant};
 
 use axum::{
     Router,
-    extract::{ConnectInfo, DefaultBodyLimit, MatchedPath, Request},
+    extract::{DefaultBodyLimit, MatchedPath, Request},
     http::{HeaderValue, header},
     middleware::{self, Next},
     response::Response,
     routing::{delete, get, post},
 };
-use tokio::sync::Semaphore;
 use tracing::Instrument;
 
 use crate::{auth::Auth, config::BasePath, store::Store};
 use error::HttpError;
 use pages::Frontend;
-use rate::RateLimit;
 
 pub struct App {
     base: BasePath,
     auth: Auth,
     store: Store,
     frontend: Frontend,
-    login_limit: RateLimit<IpAddr>,
-    extraction_limit: RateLimit<(IpAddr, String)>,
-    uploads: Semaphore,
-    downloads: Arc<Semaphore>,
 }
 
 impl App {
@@ -52,10 +39,6 @@ impl App {
             auth: Auth::new(accounts),
             store,
             frontend: Frontend::new()?,
-            login_limit: RateLimit::new(30),
-            extraction_limit: RateLimit::new(60),
-            uploads: Semaphore::new(4),
-            downloads: Arc::new(Semaphore::new(64)),
         })
     }
 
@@ -124,11 +107,6 @@ async fn response_headers(request: Request, next: Next) -> Response {
     }
     .instrument(span)
     .await
-}
-
-fn peer(connect: ConnectInfo<SocketAddr>) -> IpAddr {
-    // The immediate peer is authoritative. Reverse proxy headers can be user-supplied.
-    connect.0.ip()
 }
 
 async fn storage_work<R: Send + 'static>(

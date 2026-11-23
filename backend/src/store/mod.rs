@@ -171,7 +171,7 @@ impl Store {
                 state: Mutex::new(State {
                     conn,
                     active_downloads: HashMap::new(),
-                    password_cooldown: PasswordCooldown::default(),
+                    password_cooldown: PasswordCooldown::new(None),
                 }),
             }),
         };

@@ -23,11 +23,6 @@ pub async fn download(
     headers: HeaderMap,
     token: String,
 ) -> Result<Response, HttpError> {
-    let permit = app
-        .downloads
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| HttpError::limited())?;
     // The validator is stable for this URL and does not disclose the bearer token.
     let etag = format!("\"{:x}\"", Sha256::digest(token.as_bytes()));
     let store = app.store.clone();
@@ -85,7 +80,7 @@ pub async fn download(
     // Retain the download lease until the body and its reader are dropped,
     // including a disconnected client.
     let stream = ReaderStream::with_capacity(file.take(length), 64 * 1024).map(move |chunk| {
-        let _keep_alive = (&lease, &permit);
+        let _keep_alive = &lease;
         chunk
     });
     builder

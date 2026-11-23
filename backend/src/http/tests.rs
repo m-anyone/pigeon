@@ -1,16 +1,21 @@
-use std::{fs, path::PathBuf, time::Duration};
+use std::{collections::HashSet, fs, io::Write, net::SocketAddr, path::PathBuf, time::Duration};
 
 use axum::{
+    Extension,
     body::{Body, to_bytes},
+    extract::ConnectInfo,
     http::{Request, StatusCode},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+use crate::store::NewShare;
+
 use super::*;
 
 const FILE_BYTES: &[u8] = b"pigeon testing";
+const MULTIPART_TYPE: &str = "multipart/form-data; boundary=pigeon";
 
 struct TestData(PathBuf);
 
@@ -24,18 +29,38 @@ impl TestData {
         Self(path)
     }
 
+    fn unprotected_share(&self) -> String {
+        let store = Store::open(&self.0).unwrap();
+        let mut upload = store.start_upload().unwrap();
+        upload.take_file().write_all(FILE_BYTES).unwrap();
+        store
+            .finish_upload(
+                upload,
+                NewShare {
+                    filename: "test.txt".to_owned(),
+                    size_bytes: FILE_BYTES.len() as u64,
+                    uploaded_by: "test".to_owned(),
+                    expires_in: None,
+                    download_limit: None,
+                    password: None,
+                },
+            )
+            .unwrap()
+            .id
+    }
+
     fn router(&self, prefix: &str) -> Router {
         router(Arc::new(
             App::new(
                 prefix.parse().unwrap(),
-                HashMap::from([("test".to_owned(), "password".to_owned())]),
+                HashMap::from([
+                    ("test".to_owned(), "password".to_owned()),
+                    ("other".to_owned(), "other-password".to_owned()),
+                ]),
                 Store::open(&self.0).unwrap(),
             )
             .unwrap(),
         ))
-        .layer(axum::Extension(ConnectInfo(
-            "127.0.0.1:40000".parse::<SocketAddr>().unwrap(),
-        )))
     }
 }
 
@@ -80,6 +105,58 @@ async fn applies_exact_root_paths_and_requires_session() {
 }
 
 #[tokio::test]
+async fn login_cooldown_follows_the_username_across_sources() {
+    let data = TestData::new();
+    let app = data.router("/");
+    let first_source = app.clone().layer(Extension(ConnectInfo(
+        "127.0.0.1:40000".parse::<SocketAddr>().unwrap(),
+    )));
+    let second_source = app.layer(Extension(ConnectInfo(
+        "127.0.0.2:40000".parse::<SocketAddr>().unwrap(),
+    )));
+    let sessions = "/api/sessions";
+
+    for index in 0..31 {
+        let response = post_json(
+            &first_source,
+            sessions,
+            json!({"username": format!("unknown-{index}"), "password": "wrong"}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "name {index}");
+        assert_eq!(read_json(response).await["error"], "invalid_credentials");
+    }
+
+    let failed = post_json(
+        &first_source,
+        sessions,
+        json!({"username": "test", "password": "wrong"}),
+    )
+    .await;
+    assert_eq!(failed.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(read_json(failed).await["error"], "invalid_credentials");
+
+    let retry = post_json(
+        &second_source,
+        sessions,
+        json!({"username": "test", "password": "password"}),
+    )
+    .await;
+    assert_eq!(retry.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(retry.headers().contains_key("retry-after"));
+    assert_eq!(read_json(retry).await["error"], "password_cooldown");
+
+    let other = post_json(
+        &first_source,
+        sessions,
+        json!({"username": "other", "password": "other-password"}),
+    )
+    .await;
+    assert_eq!(other.status(), StatusCode::OK);
+    assert!(read_json(other).await["token"].is_string());
+}
+
+#[tokio::test]
 async fn anonymous_download_survives_last_extraction_and_same_data_restart() {
     let data = TestData::new();
     let app = data.router("/pigeon");
@@ -103,19 +180,13 @@ async fn anonymous_download_survives_last_extraction_and_same_data_restart() {
     assert!(login_retry.headers().contains_key("retry-after"));
     assert_eq!(read_json(login_retry).await["error"], "password_cooldown");
 
-    let mut payload =
-        b"--pigeon\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\n\r\n"
-            .to_vec();
-    payload.extend(FILE_BYTES);
+    let mut payload = multipart_file_field(FILE_BYTES);
     payload.extend(b"\r\n--pigeon\r\nContent-Disposition: form-data; name=\"max_downloads\"\r\n\r\n1\r\n--pigeon\r\nContent-Disposition: form-data; name=\"password\"\r\n\r\nP1GEON\r\n--pigeon--\r\n");
     let upload = call(
         &app,
         "POST",
         "/pigeon/api/shares",
-        &[
-            ("Content-Type", "multipart/form-data; boundary=pigeon"),
-            ("X-Pigeon-Token", token),
-        ],
+        &[("Content-Type", MULTIPART_TYPE), ("X-Pigeon-Token", token)],
         Body::from(payload),
     )
     .await;
@@ -231,6 +302,90 @@ async fn anonymous_download_survives_last_extraction_and_same_data_restart() {
     let response = call(&app, "HEAD", direct, &[], Body::empty()).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["content-length"], "14");
+}
+
+#[tokio::test]
+async fn unprotected_share_can_issue_more_than_sixty_links_to_one_client() {
+    let data = TestData::new();
+    let id = data.unprotected_share();
+    let app = data.router("/");
+    let extract = format!("/api/shares/{id}/download-links");
+    let mut urls = HashSet::new();
+    for index in 1..=61 {
+        let response = post_json(&app, &extract, json!({})).await;
+        assert_eq!(response.status(), StatusCode::CREATED, "link {index}");
+        let direct = read_json(response).await;
+        assert!(urls.insert(direct["download_url"].as_str().unwrap().to_owned()));
+    }
+}
+
+#[tokio::test]
+async fn download_bodies_remain_open_through_the_sixty_fifth_response() {
+    let data = TestData::new();
+    let id = data.unprotected_share();
+    let app = data.router("/");
+    let extract = format!("/api/shares/{id}/download-links");
+    let direct = post_json(&app, &extract, json!({})).await;
+    assert_eq!(direct.status(), StatusCode::CREATED);
+    let direct = read_json(direct).await;
+    let url = direct["download_url"].as_str().unwrap();
+
+    // Keep each response body alive until all download requests have received headers.
+    let mut bodies = Vec::new();
+    for index in 1..=65 {
+        let response = call(&app, "GET", url, &[], Body::empty()).await;
+        assert_eq!(response.status(), StatusCode::OK, "download {index}");
+        bodies.push(response.into_body());
+    }
+    for body in bodies {
+        assert_eq!(to_bytes(body, FILE_BYTES.len()).await.unwrap(), FILE_BYTES);
+    }
+}
+
+#[tokio::test]
+async fn five_uploads_can_wait_for_their_request_bodies_at_the_same_time() {
+    let data = TestData::new();
+    let app = data.router("/");
+    let session = post_json(
+        &app,
+        "/api/sessions",
+        json!({"username": "test", "password": "password"}),
+    )
+    .await;
+    assert_eq!(session.status(), StatusCode::OK);
+    let session = read_json(session).await;
+    let headers = [
+        ("Content-Type", MULTIPART_TYPE),
+        ("X-Pigeon-Token", session["token"].as_str().unwrap()),
+    ];
+    let mut payload = multipart_file_field(FILE_BYTES);
+    payload.extend(b"\r\n--pigeon--\r\n");
+
+    let mut requests = Vec::new();
+    let mut senders = Vec::new();
+    for _ in 0..5 {
+        let (sender, receiver) = tokio::sync::oneshot::channel::<Vec<u8>>();
+        let body = Body::from_stream(futures_util::stream::once(receiver));
+        let mut request = Box::pin(call(&app, "POST", "/api/shares", &headers, body));
+        // The handler must wait for its body instead of rejecting an overlapping upload.
+        assert!(futures_util::poll!(request.as_mut()).is_pending());
+        requests.push(request);
+        senders.push(sender);
+    }
+    for sender in senders {
+        sender.send(payload.clone()).unwrap();
+    }
+    for request in requests {
+        assert_eq!(request.await.status(), StatusCode::CREATED);
+    }
+}
+
+fn multipart_file_field(bytes: &[u8]) -> Vec<u8> {
+    let mut payload =
+        b"--pigeon\r\nContent-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\n\r\n"
+            .to_vec();
+    payload.extend(bytes);
+    payload
 }
 
 async fn post_json(app: &Router, path: &str, value: Value) -> Response {

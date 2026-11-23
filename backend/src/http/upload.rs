@@ -27,10 +27,6 @@ pub async fn upload(
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Result<(StatusCode, Json<Value>), HttpError> {
     let username = authenticated(&app, &headers)?;
-    let _permit = app
-        .uploads
-        .try_acquire()
-        .map_err(|_| HttpError::limited())?;
     let (stage, metadata) =
         receive(&app, multipart.map_err(|_| HttpError::invalid())?, username).await?;
     let store = app.store.clone();
