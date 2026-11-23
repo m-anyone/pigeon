@@ -131,11 +131,21 @@ jobs:
           fi
           bash scripts/stage_docker.sh "$PIGEON_DOCKER_ARCH"
           docker buildx build --load --platform "linux/$PIGEON_DOCKER_ARCH" --tag pigeon-smoke .
-          container="$(docker run --detach --rm --publish 127.0.0.1::3000 pigeon-smoke \
-            --data /data --base-path /pigeon --user smoke:smoke-password)"
-          trap 'docker stop "$container" >/dev/null' EXIT
-          address="$(docker port "$container" 3000/tcp)"
-          python3 scripts/smoke_release.py --url "http://$address"
+          smoke_image() (
+            container="$(docker run --detach --rm --publish 127.0.0.1::3000 "$@" \
+              pigeon-smoke --data /data --base-path /pigeon --user smoke:smoke-password)"
+            trap 'docker stop "$container" >/dev/null 2>&1 || true' EXIT
+            address="$(docker port "$container" 3000/tcp)"
+            python3 scripts/smoke_release.py --url "http://$address"
+          )
+
+          smoke_image
+
+          # A bind mount keeps host permissions instead of using the image's /data.
+          bind_data="$(mktemp -d "$RUNNER_TEMP/pigeon-bind.XXXXXX")"
+          sudo chown 0:0 "$bind_data"
+          sudo chmod 0700 "$bind_data"
+          smoke_image --mount "type=bind,source=$bind_data,target=/data"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.asset }}
