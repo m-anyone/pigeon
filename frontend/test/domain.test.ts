@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { appPath, formatBytes, makePassword, passwordFromShareLink, readBootstrap, shareLinkWithPassword, uploadForm } from '../src/domain.ts';
+import { appPath, formatBytes, formatUploadLimit, makePassword, passwordFromShareLink, readBootstrap, shareLinkWithPassword, uploadForm } from '../src/domain.ts';
 
 test('loads non-ASCII sharing metadata from the backend bootstrap', () => {
   const bootstrap = {
@@ -13,8 +13,8 @@ test('loads non-ASCII sharing metadata from the backend bootstrap', () => {
 });
 
 test('keeps links inside the configured base path', () => {
-  assert.equal(appPath('/', '/api/storage'), '/api/storage');
-  assert.equal(appPath('/pigeon', '/api/storage'), '/pigeon/api/storage');
+  assert.equal(appPath('/', '/api/config'), '/api/config');
+  assert.equal(appPath('/pigeon', '/api/config'), '/pigeon/api/config');
   assert.equal(appPath('/pigeon'), '/pigeon');
 });
 
@@ -56,4 +56,12 @@ test('formats filesystem space and file sizes in IEC units', () => {
   assert.equal(formatBytes(0), '0 B');
   assert.equal(formatBytes(1024), '1 KiB');
   assert.equal(formatBytes(1024 ** 3 * 1.5), '1.5 GiB');
+});
+
+test('formats upload limits in decimal MB and GB with byte precision', () => {
+  assert.equal(formatUploadLimit(128), '0.000128 MB');
+  assert.equal(formatUploadLimit(1_048_576), '1.048576 MB');
+  assert.equal(formatUploadLimit(500_000_000), '500 MB');
+  assert.equal(formatUploadLimit(1_000_000_001), '1.000000001 GB');
+  assert.equal(formatUploadLimit(1_500_000_000), '1.5 GB');
 });

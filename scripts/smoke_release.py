@@ -116,10 +116,12 @@ def check_release(origin):
         origin, f"{BASE}/api/sessions", {"username": USERNAME, "password": PASSWORD}
     )
     token = session["token"]
-    _, storage = request(
-        origin, f"{BASE}/api/storage", headers={"X-Pigeon-Token": token}
+    _, config_payload = request(
+        origin, f"{BASE}/api/config", headers={"X-Pigeon-Token": token}
     )
-    assert json.loads(storage)["available_bytes"] >= 0
+    config = json.loads(config_payload)
+    assert config["available_bytes"] >= 0
+    assert config["max_file_size_bytes"] is None
 
     share = upload_file(origin, token)
     share_id = sharing_value(share, "id")

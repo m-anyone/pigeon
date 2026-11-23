@@ -137,9 +137,11 @@ def main():
             # The frontend build has its own watcher. It must not reset Rust sessions.
             (frontend / "index.html").write_text("<title>Changed frontend</title>")
             time.sleep(1)
-            storage = Request(origin + "/api/storage", headers={"X-Pigeon-Token": token})
-            with HTTP.open(storage, timeout=2) as response:
-                assert json.load(response)["available_bytes"] >= 0
+            config_request = Request(origin + "/api/config", headers={"X-Pigeon-Token": token})
+            with HTTP.open(config_request, timeout=2) as response:
+                config = json.load(response)
+            assert config["available_bytes"] >= 0
+            assert config["max_file_size_bytes"] is None
             assert log.read_text().count("Pigeon listening") == 1
 
             source = backend / "src/http/pages.rs"

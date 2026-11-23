@@ -9,14 +9,14 @@ import Typography from '@mui/material/Typography';
 import { useEffect, useRef, useState } from 'react';
 import { useBrowserLocale } from '../browserLocale.tsx';
 import { ApiError, errorMessageKey } from '../api.ts';
-import type { PigeonApi, UploadProgress } from '../api.ts';
+import type { PigeonApi, UploadConfig, UploadProgress } from '../api.ts';
 import type { MessageKey } from '../i18n.ts';
 import { Icon } from '../components/Icon.tsx';
 import { CopyValue } from '../components/CopyValue.tsx';
 import { PigeonArt } from '../components/Brand.tsx';
 import { UploadDrop } from '../components/UploadDrop.tsx';
 import { ShareList } from '../components/ShareList.tsx';
-import { formatBytes, makePassword, shareLinkWithPassword } from '../domain.ts';
+import { formatBytes, formatUploadLimit, makePassword, shareLinkWithPassword } from '../domain.ts';
 import type { UploadOptions } from '../domain.ts';
 import { archiveFolder } from '../folderArchive.ts';
 import { readDroppedFolder } from '../folderSelection.ts';
@@ -24,42 +24,9 @@ import type { UploadSelection } from '../folderSelection.ts';
 import { usePageDrop } from '../usePageDrop.ts';
 
 type Result = { url: string; password?: string };
-type ActiveUpload = { phase: 'packing' } | { phase: 'uploading'; file: File; progress: UploadProgress };
+type ActiveUpload = { phase: 'checking' | 'packing' } | { phase: 'uploading'; file: File; progress: UploadProgress };
 
 const defaultOptions: UploadOptions = { expiration: '7', maxDownloads: '' };
-
-function DiskSpace({ api, token, onSessionExpired }: {
-  api: PigeonApi;
-  token: string;
-  onSessionExpired: () => void;
-}) {
-  const { locale, t } = useBrowserLocale();
-  const [space, setSpace] = useState<number | null>(null);
-  const [error, setError] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    api.storage(token, controller.signal).then(({ available_bytes }) => {
-      if (controller.signal.aborted) return;
-      setSpace(available_bytes);
-      setError(false);
-    }).catch((failure) => {
-      if (controller.signal.aborted) return;
-      if (failure instanceof ApiError && failure.status === 401) onSessionExpired();
-      else setError(true);
-    });
-    return () => controller.abort();
-  }, [api, token, onSessionExpired]);
-
-  return (
-    <p className="disk-summary" aria-live="polite">
-      {t('availableSpace')}{' '}
-      <span className="disk-value">
-        {error ? t('spaceUnavailable') : space === null ? t('reading') : formatBytes(space, locale)}
-      </span>
-    </p>
-  );
-}
 
 export function Upload({ api, token, onSessionExpired }: {
   api: PigeonApi;
@@ -75,17 +42,36 @@ export function Upload({ api, token, onSessionExpired }: {
   const [password, setPassword] = useState<string>();
   const [result, setResult] = useState<Result | null>(null);
   const [shareRevision, setShareRevision] = useState(0);
+  const [config, setConfig] = useState<UploadConfig>();
+  const [configUnavailable, setConfigUnavailable] = useState(false);
   const [error, setError] = useState<MessageKey | ''>('');
   const [canceled, setCanceled] = useState(false);
   const transfer = activeUpload?.phase === 'uploading' ? activeUpload : undefined;
   const saving = transfer?.progress.percent === 100;
+  const pendingLabel = activeUpload?.phase === 'packing' ? 'packingFolder' : 'reading';
   const busy = activeUpload !== null;
-  const dragging = usePageDrop(busy, upload, () => setError('oneItemOnly'));
+  const configLoading = !config && !configUnavailable;
+  const uploadDisabled = busy || configLoading;
+  const dragging = usePageDrop(uploadDisabled, upload, () => setError('oneItemOnly'));
+
+  useEffect(() => {
+    const controller = new AbortController();
+    api.config(token, controller.signal).then((next) => {
+      if (controller.signal.aborted) return;
+      setConfig(next);
+      setConfigUnavailable(false);
+    }).catch((failure) => {
+      if (controller.signal.aborted) return;
+      if (failure instanceof ApiError && failure.status === 401) onSessionExpired();
+      else setConfigUnavailable(true);
+    });
+    return () => controller.abort();
+  }, [api, token, onSessionExpired, shareRevision]);
 
   useEffect(() => () => inFlight.current?.controller.abort(), []);
 
   async function upload(selection: UploadSelection) {
-    if (inFlight.current || (!result && !form.current?.reportValidity())) return;
+    if (inFlight.current || configLoading || (!result && !form.current?.reportValidity())) return;
     const folder = !(selection instanceof File);
     const options = result ? defaultOptions : { expiration, maxDownloads, password };
     if (result) reset();
@@ -95,10 +81,19 @@ export function Upload({ api, token, onSessionExpired }: {
     const { signal } = operation.controller;
     setError('');
     setCanceled(false);
-    let packing = folder;
+    let packing = false;
     try {
+      let uploadConfig = config;
+      if (!uploadConfig) {
+        setActiveUpload({ phase: 'checking' });
+        uploadConfig = await api.config(token, signal);
+        signal.throwIfAborted();
+        setConfig(uploadConfig);
+        setConfigUnavailable(false);
+      }
       let file: File;
       if (folder) {
+        packing = true;
         setActiveUpload({ phase: 'packing' });
         const files = Array.isArray(selection) ? selection : await readDroppedFolder(selection, signal);
         if (files.length === 0) {
@@ -110,6 +105,11 @@ export function Upload({ api, token, onSessionExpired }: {
         file = selection;
       }
       packing = false;
+      const maxSize = uploadConfig.max_file_size_bytes;
+      if (maxSize !== null && file.size > maxSize) {
+        setError('fileTooLarge');
+        return;
+      }
       const reportProgress = (progress: UploadProgress) => {
         if (signal.aborted) return;
         operation.bodySent = progress.percent === 100;
@@ -143,6 +143,11 @@ export function Upload({ api, token, onSessionExpired }: {
     setPassword(undefined);
     setError('');
   }
+
+  const configuredLimit = config?.max_file_size_bytes ?? null;
+  const errorText = error === 'fileTooLarge' && configuredLimit !== null
+    ? t('fileTooLargeWithLimit', { limit: formatUploadLimit(configuredLimit, locale) })
+    : error && t(error);
 
   return (
     <main className={dragging ? "workspace is-dragging" : "workspace"}>
@@ -221,19 +226,24 @@ export function Upload({ api, token, onSessionExpired }: {
                       }} />
                   )}
                 </div>
-                <DiskSpace api={api} token={token} onSessionExpired={onSessionExpired} />
+                <p className="disk-summary" aria-live="polite">
+                  {t('availableSpace')}{' '}
+                  <span className="disk-value">
+                    {configUnavailable ? t('spaceUnavailable') : config ? formatBytes(config.available_bytes, locale) : t('reading')}
+                  </span>
+                </p>
               </fieldset>
-              <UploadDrop file={transfer?.file} disabled={busy} onSelect={upload} />
+              <UploadDrop file={transfer?.file} disabled={uploadDisabled} onSelect={upload} />
               {activeUpload && (
                 <div className="upload-status">
                   <div className="upload-status-line">
                     <p role="status">{transfer
                       ? saving ? t('saving') : t('uploading', { progress: transfer.progress.percent })
-                      : t('packingFolder')}</p>
+                      : t(pendingLabel)}</p>
                     {transfer && !saving && <span>{formatBytes(transfer.progress.bytesPerSecond, locale)}/s</span>}
                   </div>
                   <LinearProgress className="upload-progress" variant={transfer ? 'determinate' : 'indeterminate'}
-                    value={transfer?.progress.percent} aria-label={transfer ? t('uploadProgress') : t('packingFolder')} />
+                    value={transfer?.progress.percent} aria-label={t(transfer ? 'uploadProgress' : pendingLabel)} />
                   {!saving && <Button className="upload-cancel" type="button" variant="outlined"
                     onClick={cancelUpload}>
                     {t('cancelUpload')}
@@ -243,7 +253,7 @@ export function Upload({ api, token, onSessionExpired }: {
             </form>
           </>
         )}
-        {error && <Alert className="upload-error" severity="error" icon={false}>{t(error)}</Alert>}
+        {errorText && <Alert className="upload-error" severity="error" icon={false}>{errorText}</Alert>}
         {!error && canceled && <p className="upload-canceled" role="status">{t('uploadCanceled')}</p>}
       </Paper>
       <ShareList api={api} token={token} onSessionExpired={onSessionExpired} refreshKey={shareRevision} />

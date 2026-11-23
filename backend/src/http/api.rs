@@ -58,14 +58,17 @@ pub fn authenticated(app: &App, headers: &HeaderMap) -> Result<String, HttpError
         .ok_or_else(HttpError::unauthorized)
 }
 
-pub async fn storage(
+pub async fn config(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, HttpError> {
     authenticated(&app, &headers)?;
     let store = app.store.clone();
-    let bytes = storage_work(move || store.available_bytes()).await?;
-    Ok(Json(json!({ "available_bytes": bytes })))
+    let available_bytes = storage_work(move || store.available_bytes()).await?;
+    Ok(Json(json!({
+        "available_bytes": available_bytes,
+        "max_file_size_bytes": app.max_file_size,
+    })))
 }
 
 pub async fn extract_link(

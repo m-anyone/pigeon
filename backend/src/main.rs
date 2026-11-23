@@ -24,12 +24,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::debug!(
         base_path = %base.home(),
         account_count = accounts.len(),
+        max_file_size_bytes = ?args.max_file_size,
         "Backend configuration loaded"
     );
     let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, args.port)).await?;
     let store = Store::open(&args.data)?;
     tracing::debug!("Storage initialized and startup cleanup completed");
-    let state = Arc::new(http::App::new(base, accounts, store.clone())?);
+    let state = Arc::new(http::App::new(
+        base,
+        accounts,
+        store.clone(),
+        args.max_file_size,
+    )?);
 
     let cleanup = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));

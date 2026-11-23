@@ -49,6 +49,13 @@ export function formatBytes(bytes: number, locale = 'en') {
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(bytes / (1024 ** exponent))} ${units[exponent]}`;
 }
 
+export function formatUploadLimit(bytes: number, locale = 'en') {
+  const inGigabytes = bytes >= 1_000_000_000;
+  const unitBytes = inGigabytes ? 1_000_000_000 : 1_000_000;
+  const amount = new Intl.NumberFormat(locale, { maximumFractionDigits: inGigabytes ? 9 : 6 });
+  return `${amount.format(bytes / unitBytes)} ${inGigabytes ? 'GB' : 'MB'}`;
+}
+
 export function makePassword() {
   // The alphabet has 32 symbols, so masking is uniform for random bytes.
   const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';

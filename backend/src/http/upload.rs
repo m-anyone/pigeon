@@ -15,8 +15,8 @@ use crate::store::{NewShare, StagedUpload};
 
 use super::{App, api::authenticated, error::HttpError, storage_work};
 
-const MAX_FILE: usize = 64 * 1024 * 1024 * 1024;
-pub const MAX_BODY: usize = MAX_FILE + 1024 * 1024;
+// Account for multipart headers and optional fields separately from the file bytes.
+pub const MULTIPART_OVERHEAD: usize = 1024 * 1024;
 const RESERVE: u64 = 256 * 1024 * 1024;
 const DISK_CHECK_INTERVAL: u64 = 8 * 1024 * 1024;
 const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
@@ -114,8 +114,11 @@ async fn receive_file(
         .map_err(|_| timed_out())?
         .map_err(multipart_error)?
     {
-        let size_after_chunk = size + chunk.len() as u64;
-        if size_after_chunk > MAX_FILE as u64 {
+        let size_after_chunk = size.checked_add(chunk.len() as u64).ok_or_else(too_large)?;
+        if app
+            .max_file_size
+            .is_some_and(|max_size| size_after_chunk > max_size as u64)
+        {
             return Err(too_large());
         }
         if size_after_chunk > until_check {

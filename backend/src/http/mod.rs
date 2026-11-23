@@ -26,6 +26,7 @@ pub struct App {
     auth: Auth,
     store: Store,
     frontend: Frontend,
+    max_file_size: Option<usize>,
 }
 
 impl App {
@@ -33,12 +34,14 @@ impl App {
         base: BasePath,
         accounts: HashMap<String, String>,
         store: Store,
+        max_file_size: Option<usize>,
     ) -> io::Result<Self> {
         Ok(Self {
             base,
             auth: Auth::new(accounts),
             store,
             frontend: Frontend::new()?,
+            max_file_size,
         })
     }
 
@@ -49,6 +52,10 @@ impl App {
 }
 
 pub fn router(app: Arc<App>) -> Router {
+    let upload_body_limit = match app.max_file_size {
+        Some(size) => DefaultBodyLimit::max(size.saturating_add(upload::MULTIPART_OVERHEAD)),
+        None => DefaultBodyLimit::disable(),
+    };
     Router::new()
         .route(app.base.home(), get(pages::home))
         .route(&app.base.path("/sharing"), get(pages::sharing))
@@ -59,12 +66,12 @@ pub fn router(app: Arc<App>) -> Router {
                 .delete(api::logout)
                 .layer(DefaultBodyLimit::max(4096)),
         )
-        .route(&app.base.path("/api/storage"), get(api::storage))
+        .route(&app.base.path("/api/config"), get(api::config))
         .route(
             &app.base.path("/api/shares"),
             get(shares::list)
                 .post(upload::upload)
-                .layer(DefaultBodyLimit::max(upload::MAX_BODY)),
+                .layer(upload_body_limit),
         )
         .route(&app.base.path("/api/shares/{id}"), delete(shares::delete))
         .route(

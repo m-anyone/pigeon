@@ -50,6 +50,10 @@ impl TestData {
     }
 
     fn router(&self, prefix: &str) -> Router {
+        self.router_with_limit(prefix, None)
+    }
+
+    fn router_with_limit(&self, prefix: &str, max_file_size: Option<usize>) -> Router {
         router(Arc::new(
             App::new(
                 prefix.parse().unwrap(),
@@ -58,6 +62,7 @@ impl TestData {
                     ("other".to_owned(), "other-password".to_owned()),
                 ]),
                 Store::open(&self.0).unwrap(),
+                max_file_size,
             )
             .unwrap(),
         ))
@@ -87,6 +92,7 @@ async fn applies_exact_root_paths_and_requires_session() {
         "/sharing?id=bad",
         "/sharing?download=bad",
         "/api/missing",
+        "/api/storage",
     ] {
         assert_eq!(
             call(&app, "GET", path, &[], Body::empty()).await.status(),
@@ -96,12 +102,107 @@ async fn applies_exact_root_paths_and_requires_session() {
     let response = call(
         &app,
         "GET",
-        "/api/storage",
+        "/api/config",
         &[("Authorization", "Basic example")],
         Body::empty(),
     )
     .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn config_under_base_path_reports_and_enforces_the_upload_size_limit() {
+    let data = TestData::new();
+    let app = data.router_with_limit("/pigeon", Some(FILE_BYTES.len()));
+    let config_path = "/pigeon/api/config";
+    assert_eq!(
+        call(&app, "GET", config_path, &[], Body::empty())
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let session = post_json(
+        &app,
+        "/pigeon/api/sessions",
+        json!({"username": "test", "password": "password"}),
+    )
+    .await;
+    assert_eq!(session.status(), StatusCode::OK);
+    let session = read_json(session).await;
+    let token = session["token"].as_str().unwrap();
+    let auth = [("X-Pigeon-Token", token)];
+    let config = call(&app, "GET", config_path, &auth, Body::empty()).await;
+    assert_eq!(config.status(), StatusCode::OK);
+    let config = read_json(config).await;
+    assert!(config["available_bytes"].is_u64());
+    assert_eq!(config["max_file_size_bytes"], FILE_BYTES.len());
+    for path in ["/api/config", "/pigeon/api/storage"] {
+        assert_eq!(
+            call(&app, "GET", path, &auth, Body::empty()).await.status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    let upload_headers = [("Content-Type", MULTIPART_TYPE), auth[0]];
+    let upload = |bytes: &[u8]| {
+        let mut payload = multipart_file_field(bytes);
+        payload.extend(b"\r\n--pigeon--\r\n");
+        call(
+            &app,
+            "POST",
+            "/pigeon/api/shares",
+            &upload_headers,
+            Body::from(payload),
+        )
+    };
+    let accepted = upload(FILE_BYTES).await;
+    assert_eq!(accepted.status(), StatusCode::CREATED);
+    let oversized = [FILE_BYTES, b"!"].concat();
+    let rejection = upload(&oversized).await;
+    assert_eq!(rejection.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(read_json(rejection).await["error"], "file_too_large");
+}
+
+#[tokio::test]
+async fn default_config_allows_uploads_over_axums_default_body_limit() {
+    let data = TestData::new();
+    let app = data.router("/");
+    let session = post_json(
+        &app,
+        "/api/sessions",
+        json!({"username": "test", "password": "password"}),
+    )
+    .await;
+    assert_eq!(session.status(), StatusCode::OK);
+    let session = read_json(session).await;
+    let token = session["token"].as_str().unwrap();
+    let config = call(
+        &app,
+        "GET",
+        "/api/config",
+        &[("X-Pigeon-Token", token)],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(config.status(), StatusCode::OK);
+    assert_eq!(
+        read_json(config).await.get("max_file_size_bytes"),
+        Some(&Value::Null)
+    );
+
+    let file = vec![b'x'; 2 * 1024 * 1024 + 1];
+    let mut payload = multipart_file_field(&file);
+    payload.extend(b"\r\n--pigeon--\r\n");
+    let response = call(
+        &app,
+        "POST",
+        "/api/shares",
+        &[("Content-Type", MULTIPART_TYPE), ("X-Pigeon-Token", token)],
+        Body::from(payload),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -257,7 +358,7 @@ async fn anonymous_download_survives_last_extraction_and_same_data_restart() {
     let after_logout = call(
         &app,
         "GET",
-        "/pigeon/api/storage",
+        "/pigeon/api/config",
         &[("X-Pigeon-Token", token)],
         Body::empty(),
     )
@@ -279,7 +380,7 @@ async fn anonymous_download_survives_last_extraction_and_same_data_restart() {
     let response = call(
         &app,
         "GET",
-        "/pigeon/api/storage",
+        "/pigeon/api/config",
         &[("X-Pigeon-Token", token)],
         Body::empty(),
     )

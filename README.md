@@ -16,6 +16,7 @@ pigeon --user 'alice:example-password' --port 3000
 | `--port <port>` | HTTP 监听端口, 默认 `3000` |
 | `--base-path <path>` | 公网部署路径, 默认 `/` |
 | `--data <dir>` | 数据目录, 默认当前工作目录下的 `./pigeon-data` |
+| `--max-file-size <size>` | 单文件上传上限, 例如 `500MB` 或 `2GB`. 默认不限 |
 
 根路径部署的入口是 `/`。用 `--base-path /pigeon` 时, 入口是 `/pigeon`, 分享地址为 `/pigeon/sharing?id=...`, 爬虫规则位于 `/pigeon/robots.txt`。反向代理应保留配置的路径前缀。
 
@@ -29,7 +30,9 @@ pigeon --user 'alice:example-password' --port 3000
 - 登录使用 `X-Pigeon-Token`, 令牌从签发起有效 180 天. 页面使用标签页会话存储保存令牌, 同一标签页刷新或在首页和分享页之间跳转时保留登录状态. 退出登录或会话失效时清除令牌. 后端重启后需重新登录.
 - SQLite、文件和下载直链状态保存在 `--data`。每个数据目录由一个 Pigeon 实例独占。列表按上传时的用户名归属, 已发链接按各分享的规则处理.
 
-公网请通过 HTTPS 反向代理访问。部署者自行配置外层 HTTP Auth。请限制数据目录权限, 并在代理日志中隐藏分享和直链查询参数。首版单文件上限为 64 GiB, 预留 256 MiB 磁盘空间。代理允许的请求大小和超时时间应与实际文件规模匹配。
+登录后可从 `GET /api/config` 读取 `available_bytes` 和 `max_file_size_bytes`, 分别是数据目录所在磁盘的可用空间和单文件上传上限, 单位均为字节. 文件大小不限时, `max_file_size_bytes` 为 `null`. 前端在发送文件前校验上限, 目录上传按打包后的 ZIP 大小计算.
+
+公网请通过 HTTPS 反向代理访问. 部署者自行配置外层 HTTP Auth. 请限制数据目录权限, 并在代理日志中隐藏分享和直链查询参数. 写入时检查 256 MiB 的磁盘预留空间. 代理允许的请求大小和超时时间应与实际文件规模匹配.
 
 ## Docker
 

@@ -19,6 +19,7 @@ export type SharePage = {
 };
 
 export type UploadProgress = { percent: number; bytesPerSecond: number };
+export type UploadConfig = { available_bytes: number; max_file_size_bytes: number | null };
 export type DownloadLink = { download_url: string; filename: string; size_bytes: number };
 
 export class ApiError extends Error {
@@ -50,8 +51,10 @@ export function createApi(basePath: string) {
     async logout(token: string) {
       await request<void>(apiUrl('/sessions'), { method: 'DELETE', headers: session(token) });
     },
-    storage(token: string, signal: AbortSignal) {
-      return request<{ available_bytes: number }>(apiUrl('/storage'), { headers: session(token), signal });
+    config(token: string, signal: AbortSignal) {
+      return request<UploadConfig>(
+        apiUrl('/config'), { headers: session(token), signal },
+      );
     },
     listShares(token: string, page: number, query: string, signal: AbortSignal) {
       const params = new URLSearchParams({ page: String(page) });

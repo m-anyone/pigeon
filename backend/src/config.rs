@@ -20,6 +20,14 @@ pub struct Arguments {
 
     #[arg(
         long,
+        value_name = "SIZE",
+        value_parser = parse_file_size,
+        help = "Maximum upload file size, e.g. 500MB or 2GB. Omit for unlimited."
+    )]
+    pub max_file_size: Option<usize>,
+
+    #[arg(
+        long,
         default_value = "./pigeon-data",
         help = "Persistent files and SQLite database"
     )]
@@ -56,6 +64,34 @@ fn valid_username(name: &str) -> bool {
         && name.len() <= 128
         && !name.chars().any(char::is_control)
         && name.trim() == name
+}
+
+fn parse_file_size(value: &str) -> Result<usize, &'static str> {
+    const INVALID_SIZE: &str =
+        "expected a positive size such as 500MB or 2GB within the supported range";
+    let value = value.trim();
+    let unit_start = value
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(value.len());
+    let (amount, unit) = value.split_at(unit_start);
+    let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
+        "" | "b" => 1,
+        "mb" => 1_000_000,
+        "gb" => 1_000_000_000,
+        "kib" => 1 << 10,
+        "mib" => 1 << 20,
+        "gib" => 1 << 30,
+        "tib" => 1 << 40,
+        _ => return Err(INVALID_SIZE),
+    };
+    amount
+        .parse::<u64>()
+        .ok()
+        .and_then(|amount| amount.checked_mul(multiplier))
+        // SQLite stores file sizes as signed 64-bit integers.
+        .filter(|&bytes| (1..=i64::MAX as u64).contains(&bytes))
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .ok_or(INVALID_SIZE)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +137,37 @@ impl BasePath {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_max_file_size_in_bytes_and_supported_units() {
+        let args = Arguments::try_parse_from(["pigeon"]).unwrap();
+        assert_eq!(args.max_file_size, None);
+        for (value, bytes) in [
+            ("128", 128),
+            ("32B", 32),
+            ("500MB", 500_000_000),
+            ("2GB", 2_000_000_000),
+            ("5 KiB", 5 * 1024),
+            ("2mib", 2 * 1024 * 1024),
+        ] {
+            let args = Arguments::try_parse_from(["pigeon", "--max-file-size", value]).unwrap();
+            assert_eq!(args.max_file_size, Some(bytes));
+        }
+        for value in [
+            "0",
+            "-1",
+            "KiB",
+            "1.5GiB",
+            "1XB",
+            "9223372036854775808",
+            "18446744073709551615MiB",
+        ] {
+            assert!(
+                Arguments::try_parse_from(["pigeon", "--max-file-size", value]).is_err(),
+                "{value}"
+            );
+        }
+    }
 
     #[test]
     fn normalizes_configuration_into_exact_routes() {
