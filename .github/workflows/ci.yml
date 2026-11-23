@@ -11,8 +11,8 @@ permissions:
 
 jobs:
   frontend:
-    # A push event can also report a deleted or moved tag.
-    if: github.ref_type != 'tag' || github.event.created
+    # Pull requests use the base repository. Tag pushes can also move or delete a tag.
+    if: github.repository == 'mebtte/pigeon' && (github.ref_type != 'tag' || github.event.created)
     runs-on: ubuntu-24.04
     defaults:
       run:

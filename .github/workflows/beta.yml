@@ -13,7 +13,8 @@ defaults:
 
 jobs:
   frontend:
-    if: github.event.deleted == false
+    # Use the upstream repository's Docker Hub credentials for beta builds.
+    if: github.repository == 'mebtte/pigeon' && github.event.deleted == false
     runs-on: ubuntu-24.04
     defaults:
       run:
