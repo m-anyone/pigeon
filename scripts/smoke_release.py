@@ -1,0 +1,216 @@
+"""Exercise the standalone release or a container running that release."""
+
+import argparse
+from contextlib import contextmanager
+from html.parser import HTMLParser
+from pathlib import Path
+import json
+import shutil
+import socket
+import subprocess
+import tempfile
+import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlsplit
+from urllib.request import ProxyHandler, Request, build_opener
+from uuid import uuid4
+
+BASE = "/pigeon"
+USERNAME = "smoke"
+PASSWORD = "smoke-password"
+SHARE_PASSWORD = "P1GE0N42"
+PAYLOAD = b"hello pigeon\n"
+OPENER = build_opener(ProxyHandler({}))
+
+
+class FrontendPage(HTMLParser):
+    inline_entry = False
+
+    def handle_starttag(self, tag, attributes):
+        fields = dict(attributes)
+        if tag == "script" and fields.get("type") == "module" and "src" not in fields:
+            self.inline_entry = True
+
+
+def request(origin, path, *, method="GET", headers=None, body=None, status=200):
+    req = Request(origin + path, method=method, headers=headers or {}, data=body)
+    try:
+        response = OPENER.open(req, timeout=5)
+    except HTTPError as error:
+        response = error
+    with response:
+        data = response.read()
+        if response.status != status:
+            raise AssertionError(
+                f"{method} {path}: expected {status}, got {response.status}: {data[:250]!r}"
+            )
+        return response.headers, data
+
+
+def post_json(origin, path, values, *, status=200):
+    _, body = request(
+        origin,
+        path,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+        body=json.dumps(values).encode(),
+        status=status,
+    )
+    return json.loads(body)
+
+
+def check_embedded_page(origin, path):
+    headers, body = request(origin, path)
+    page = FrontendPage()
+    page.feed(body.decode())
+    assert headers.get_content_type() == "text/html", path
+    assert page.inline_entry, f"{path} lacks the embedded React entry point"
+
+
+def upload_file(origin, token, *, filename="smoke.txt", fields=None):
+    boundary = uuid4().hex
+    if fields is None:
+        fields = {"password": SHARE_PASSWORD, "expiry_days": "7", "max_downloads": "1"}
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        for name, value in fields.items()
+    ]
+    parts.extend(
+        [
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode(),
+            b"Content-Type: text/plain\r\n\r\n",
+            PAYLOAD,
+            f"\r\n--{boundary}--\r\n".encode(),
+        ]
+    )
+    _, uploaded = request(
+        origin,
+        f"{BASE}/api/shares",
+        method="POST",
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "X-Pigeon-Token": token,
+        },
+        body=b"".join(parts),
+        status=201,
+    )
+    return json.loads(uploaded)["share_url"]
+
+
+def sharing_value(url, key):
+    parsed = urlsplit(url)
+    assert not (parsed.scheme or parsed.netloc or parsed.fragment), url
+    assert parsed.path == f"{BASE}/sharing", url
+    query = parse_qs(parsed.query, strict_parsing=True)
+    assert set(query) == {key} and len(query[key]) == 1, url
+    return query[key][0]
+
+
+def check_release(origin):
+    check_embedded_page(origin, BASE)
+    request(origin, f"{BASE}/unknown", status=404)
+    _, robots = request(origin, f"{BASE}/robots.txt")
+    assert b"Disallow: /" in robots, robots
+
+    session = post_json(
+        origin, f"{BASE}/api/sessions", {"username": USERNAME, "password": PASSWORD}
+    )
+    token = session["token"]
+    _, storage = request(
+        origin, f"{BASE}/api/storage", headers={"X-Pigeon-Token": token}
+    )
+    assert json.loads(storage)["available_bytes"] >= 0
+
+    share = upload_file(origin, token)
+    share_id = sharing_value(share, "id")
+    check_embedded_page(origin, share)
+
+    extraction = post_json(
+        origin,
+        f"{BASE}/api/shares/{share_id}/download-links",
+        {"password": SHARE_PASSWORD},
+        status=201,
+    )
+
+    # The last extraction hides the share while its temporary download still works.
+    request(origin, share, status=404)
+    download_url = extraction["download_url"]
+    sharing_value(download_url, "download")
+    headers, data = request(
+        origin, download_url, headers={"Range": "bytes=0-4"}, status=206
+    )
+    assert headers.get("Content-Range") == f"bytes 0-4/{len(PAYLOAD)}"
+    assert data == PAYLOAD[:5], data
+    _, data = request(origin, download_url)
+    assert data == PAYLOAD, data
+
+
+def wait_for_server(origin, process=None):
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if process is not None and process.poll() is not None:
+            raise RuntimeError(f"Pigeon exited with status {process.returncode}")
+        try:
+            request(origin, f"{BASE}/robots.txt")
+        except (URLError, TimeoutError):
+            time.sleep(0.1)
+        else:
+            return
+    raise TimeoutError(f"Pigeon did not listen on {origin}")
+
+
+@contextmanager
+def start_standalone(binary, *, accounts=((USERNAME, PASSWORD),)):
+    with tempfile.TemporaryDirectory(prefix="pigeon-release-") as directory:
+        # Only the shipping executable goes into the scratch directory.
+        root = Path(directory)
+        executable = root / binary.name
+        shutil.copy2(binary, executable)
+        with socket.socket() as reserving:
+            reserving.bind(("127.0.0.1", 0))
+            port = reserving.getsockname()[1]
+        arguments = [
+            str(executable),
+            "--port",
+            str(port),
+            "--data",
+            str(root / "data"),
+            "--base-path",
+            BASE,
+        ]
+        for username, password in accounts:
+            arguments.extend(("--user", f"{username}:{password}"))
+        process = subprocess.Popen(arguments, cwd=root)
+        try:
+            origin = f"http://127.0.0.1:{port}"
+            wait_for_server(origin, process)
+            yield origin
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("binary", nargs="?", type=Path)
+    target.add_argument("--url", help="Origin of a running smoke-test container")
+    args = parser.parse_args()
+
+    if args.url:
+        origin = args.url.rstrip("/")
+        wait_for_server(origin)
+        check_release(origin)
+    else:
+        with start_standalone(args.binary.resolve(strict=True)) as origin:
+            check_release(origin)
+    print("Release smoke test passed")
+
+
+if __name__ == "__main__":
+    main()
