@@ -116,9 +116,16 @@ async fn serves_one_html_shell_with_separate_public_share_metadata() {
     let id = data.unprotected_share();
     let app = data.router("/pigeon");
 
-    let home = call(&app, "GET", "/pigeon", &[], Body::empty()).await;
+    let home = call(&app, "GET", "/pigeon/", &[], Body::empty()).await;
     assert_eq!(home.status(), StatusCode::OK);
     let html = to_bytes(home.into_body(), usize::MAX).await.unwrap();
+
+    let legacy_home = call(&app, "GET", "/pigeon", &[], Body::empty()).await;
+    assert_eq!(legacy_home.status(), StatusCode::OK);
+    assert_eq!(
+        to_bytes(legacy_home.into_body(), usize::MAX).await.unwrap(),
+        html
+    );
 
     let (_, meta) = std::str::from_utf8(&html)
         .unwrap()
@@ -330,7 +337,7 @@ async fn anonymous_download_survives_last_extraction_and_same_data_restart() {
     let upload = read_json(upload).await;
     assert!(upload["expires_at"].is_null());
     let share = upload["share_url"].as_str().unwrap();
-    let id = share.strip_prefix("/pigeon#/sharing/").unwrap();
+    let id = share.strip_prefix("/pigeon/#/sharing/").unwrap();
     let metadata_path = format!("/pigeon/api/shares/{id}");
     let extract = format!("{metadata_path}/download-links");
     let metadata = call(&app, "GET", &metadata_path, &[], Body::empty()).await;

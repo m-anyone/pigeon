@@ -110,7 +110,7 @@ def upload_file(origin, token, *, filename="smoke.txt", fields=None):
 def share_id_from_url(url):
     parsed = urlsplit(url)
     assert not (parsed.scheme or parsed.netloc or parsed.query), url
-    assert parsed.path == BASE, url
+    assert parsed.path == f"{BASE}/", url
     match = re.fullmatch(r"/sharing/([0-9a-f]{32})", parsed.fragment)
     assert match, url
     return match.group(1)
@@ -125,7 +125,7 @@ def check_download_url(url):
 
 
 def check_release(origin):
-    check_embedded_page(origin, BASE)
+    check_embedded_page(origin, f"{BASE}/")
     request(origin, f"{BASE}/unknown", status=404)
     _, robots = request(origin, f"{BASE}/robots.txt")
     assert b"Disallow: /" in robots, robots
