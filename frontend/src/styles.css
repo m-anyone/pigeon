@@ -161,7 +161,7 @@ button:focus-visible, a:focus-visible {
   flex: 0 0 auto;
 }
 
-.entry-heading + form, .entry-content .download-ready { margin-top: 20px; }
+.entry-heading + form { margin-top: 20px; }
 .incoming-file {
   display: grid;
   gap: 5px;
