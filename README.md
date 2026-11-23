@@ -52,3 +52,7 @@ Options:
   -h, --help                      Print help
   -V, --version                   Print version
 ```
+
+## License
+
+Pigeon is licensed under the [GNU General Public License v3.0](LICENSE) (`GPL-3.0-only`).
