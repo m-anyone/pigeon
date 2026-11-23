@@ -31,6 +31,8 @@ docker run -d --name pigeon \
 ```yaml
 services:
   pigeon:
+    restart: always
+    container_name: pigeon
     image: mebtte/pigeon:v0
     ports:
       - 3000:3000
