@@ -1,0 +1,8 @@
+.DS_Store
+/backend/target/
+/frontend/node_modules/
+/frontend/dist/
+/pigeon-data/
+__pycache__/
+/docker-context/
+/release/
