@@ -19,9 +19,9 @@ import { ShareList } from '../components/ShareList.tsx';
 import { formatBytes, formatUploadLimit, makePassword } from '../domain.ts';
 import { shareLinkWithPassword } from '../routes.ts';
 import type { UploadOptions } from '../domain.ts';
-import { archiveFolder } from '../folderArchive.ts';
+import { archiveFiles, archiveFolder } from '../folderArchive.ts';
 import { readDroppedFolder } from '../folderSelection.ts';
-import type { UploadSelection } from '../folderSelection.ts';
+import type { UploadSelection } from '../uploadSelection.ts';
 import { usePageDrop } from '../usePageDrop.ts';
 
 type Result = { url: string; password?: string };
@@ -49,11 +49,11 @@ export function Upload({ api, token, onSessionExpired }: {
   const [canceled, setCanceled] = useState(false);
   const transfer = activeUpload?.phase === 'uploading' ? activeUpload : undefined;
   const saving = transfer?.progress.percent === 100;
-  const pendingLabel = activeUpload?.phase === 'packing' ? 'packingFolder' : 'reading';
+  const pendingLabel = activeUpload?.phase === 'packing' ? 'packingArchive' : 'reading';
   const busy = activeUpload !== null;
   const configLoading = !config && !configUnavailable;
   const uploadDisabled = busy || configLoading;
-  const dragging = usePageDrop(uploadDisabled, upload, () => setError('oneItemOnly'));
+  const dragging = usePageDrop(uploadDisabled, upload, () => setError('dropFolderSeparately'));
 
   useEffect(() => {
     const controller = new AbortController();
@@ -73,7 +73,6 @@ export function Upload({ api, token, onSessionExpired }: {
 
   async function upload(selection: UploadSelection) {
     if (inFlight.current || configLoading || (!result && !form.current?.reportValidity())) return;
-    const folder = !(selection instanceof File);
     const options = result ? defaultOptions : { expiration, maxDownloads, password };
     if (result) reset();
     // Lock both pickers for the entire pack-and-upload operation.
@@ -93,17 +92,21 @@ export function Upload({ api, token, onSessionExpired }: {
         setConfigUnavailable(false);
       }
       let file: File;
-      if (folder) {
+      if (selection.kind === 'file') {
+        file = selection.file;
+      } else {
         packing = true;
         setActiveUpload({ phase: 'packing' });
-        const files = Array.isArray(selection) ? selection : await readDroppedFolder(selection, signal);
-        if (files.length === 0) {
-          setError('emptyFolder');
-          return;
+        if (selection.kind === 'files') {
+          file = await archiveFiles(selection.files, signal);
+        } else {
+          const files = selection.kind === 'folder' ? selection.files : await readDroppedFolder(selection.entry, signal);
+          if (files.length === 0) {
+            setError('emptyFolder');
+            return;
+          }
+          file = await archiveFolder(files, signal);
         }
-        file = await archiveFolder(files, signal);
-      } else {
-        file = selection;
       }
       packing = false;
       const maxSize = uploadConfig.max_file_size_bytes;
@@ -122,7 +125,7 @@ export function Upload({ api, token, onSessionExpired }: {
       setShareRevision((revision) => revision + 1);
     } catch (failure) {
       if (signal.aborted) setCanceled(true);
-      else if (packing) setError('folderArchiveFailed');
+      else if (packing) setError('archiveFailed');
       else if (failure instanceof ApiError && failure.status === 401) onSessionExpired();
       else setError(errorMessageKey(failure, 'uploadFailed'));
     } finally {

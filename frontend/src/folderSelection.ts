@@ -1,5 +1,4 @@
 export type FolderFile = { file: File; path: string };
-export type UploadSelection = File | FolderFile[] | FileSystemDirectoryEntry;
 
 export async function readDroppedFolder(root: FileSystemDirectoryEntry, signal?: AbortSignal): Promise<FolderFile[]> {
   const files: FolderFile[] = [];

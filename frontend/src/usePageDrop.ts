@@ -1,10 +1,11 @@
 import { useEffect, useEffectEvent, useState } from 'react';
-import type { UploadSelection } from './folderSelection.ts';
+import { selectDroppedFiles } from './uploadSelection.ts';
+import type { UploadSelection } from './uploadSelection.ts';
 
 export function usePageDrop(
   disabled: boolean,
   onSelect: (selection: UploadSelection) => void,
-  onMultipleItems: () => void,
+  onFolderWithOtherItems: () => void,
 ) {
   const [dragging, setDragging] = useState(false);
 
@@ -15,16 +16,9 @@ export function usePageDrop(
 
   const pick = useEffectEvent((transfer: DataTransfer) => {
     if (disabled) return;
-    const { items, files } = transfer;
-    const fileItems = Array.from(items).filter((item) => item.kind === 'file');
-    if (files.length > 1 || fileItems.length > 1) {
-      onMultipleItems();
-      return;
-    }
-    // Access the entry synchronously, while the drop event permits reading it.
-    const entry = fileItems[0]?.webkitGetAsEntry?.();
-    if (entry?.isDirectory) onSelect(entry as FileSystemDirectoryEntry);
-    else if (files.length) onSelect(files[0]);
+    const selection = selectDroppedFiles(transfer);
+    if (selection === 'dropFolderSeparately') onFolderWithOtherItems();
+    else if (selection) onSelect(selection);
   });
 
   useEffect(() => {
