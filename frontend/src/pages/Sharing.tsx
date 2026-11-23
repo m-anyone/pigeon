@@ -110,9 +110,9 @@ export function Sharing({ api, id, initialPassword }: { api: PigeonApi; id: stri
           ) : (
             <form className="fields" onSubmit={extract} aria-busy={busy}>
               {share?.requires_password && (
-                <TextField id={passwordId} name="password" type="text" label={t('extractionPassword')} variant="outlined"
+                <TextField id={passwordId} name="password" type="text" label={t('password')} variant="outlined"
                   placeholder={t('enterExtractionPassword')} required fullWidth autoFocus autoComplete="off"
-                  slotProps={{ htmlInput: { 'aria-label': t('extractionPassword'), autoCapitalize: 'none', spellCheck: false } }}
+                  slotProps={{ htmlInput: { 'aria-label': t('password'), autoCapitalize: 'none', spellCheck: false } }}
                   value={password} onChange={(event) => setPassword(event.currentTarget.value)} />
               )}
               {error && <Alert severity="error">{t(error)}</Alert>}

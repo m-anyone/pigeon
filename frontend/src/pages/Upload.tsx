@@ -208,17 +208,17 @@ export function Upload({ api, token, onSessionExpired }: {
                     <Switch size="small" disabled={busy} checked={password !== undefined}
                       onChange={(event) => setPassword(event.target.checked ? makePassword() : undefined)}
                       slotProps={{ input: { role: 'switch' } }} />
-                    <span>{t('extractionPassword')}</span>
+                    <span>{t('password')}</span>
                   </label>
                   {password !== undefined && (
                     <TextField className="share-password-input" variant="outlined" size="small" type="text"
-                      label={t('sharePasswordValue')} required disabled={busy} value={password}
+                      required disabled={busy} value={password}
                       onChange={(event) => setPassword(event.target.value)}
                       slotProps={{
                         htmlInput: {
                           pattern: '[A-Za-z0-9]+',
                           maxLength: 64,
-                          'aria-label': t('sharePasswordValue'),
+                          'aria-label': t('password'),
                           title: t('sharePasswordFormat'),
                           autoComplete: 'off',
                           autoCapitalize: 'none',
