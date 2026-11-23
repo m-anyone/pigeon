@@ -1,8 +1,12 @@
+<img src="docs/pigeon.svg" alt="Pigeon logo" width="72" height="72">
+
 # Pigeon
 
 Pigeon is an extremely simple file sharing service for self-hosting.
 
-## Deploy
+![](./docs/screenshot.png)
+
+## Deployment
 
 You can download from [releases](https://github.com/mebtte/pigeon/releases) and start the service:
 
