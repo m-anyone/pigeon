@@ -3,7 +3,10 @@ use std::{collections::HashMap, path::PathBuf};
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(version, about = "Pigeon / 信鸽 — self-hosted file sharing")]
+#[command(
+    version,
+    about = "Pigeon is an extremely simple file sharing service for self hosting."
+)]
 pub struct Arguments {
     #[arg(
         long = "user",
