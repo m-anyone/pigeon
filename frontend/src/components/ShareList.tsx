@@ -247,7 +247,7 @@ export function ShareList({ api, token, onSessionExpired, refreshKey }: Props) {
           <p className="shares-list-status" role="status">{t('reading')}</p>
         )}
       </div>
-      {response && !error && (
+      {response && response.total > 0 && !error && (
         <footer className="shares-list-footer">
           <span className="shares-list-total" aria-live="polite">
             {t('shareTotal', { total: response.total.toLocaleString(locale) })}
