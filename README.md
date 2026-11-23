@@ -1,6 +1,6 @@
 # Pigeon
 
-Pigeon is an extremely simple file sharing service for self hosting.
+Pigeon is an extremely simple file sharing service for self-hosting.
 
 ## Deploy
 
@@ -39,7 +39,7 @@ services:
 
 ```console
 $ pigeon -h
-Pigeon is an extremely simple file sharing service for self hosting.
+Pigeon is an extremely simple file sharing service for self-hosting.
 
 Usage: pigeon [OPTIONS]
 
