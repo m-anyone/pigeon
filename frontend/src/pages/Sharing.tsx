@@ -2,7 +2,7 @@ import Alert from '@mui/material/Alert';
 import Button from '@mui/material/Button';
 import TextField from '@mui/material/TextField';
 import { useBrowserLocale } from '../browserLocale.tsx';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ApiError, errorMessageKey } from '../api.ts';
 import type { DownloadLink, PigeonApi } from '../api.ts';
@@ -10,29 +10,42 @@ import type { MessageKey } from '../i18n.ts';
 import { CopyValue } from '../components/CopyValue.tsx';
 import { EntryLayout } from '../components/EntryLayout.tsx';
 import { Icon } from '../components/Icon.tsx';
-import { formatBytes, passwordFromShareLink } from '../domain.ts';
+import { formatBytes } from '../domain.ts';
 import type { Share } from '../domain.ts';
 
-export function Sharing({ api, share }: { api: PigeonApi; share?: Share }) {
+type ShareView = { status: 'loading' | 'unavailable' | 'failed' } | { status: 'ready'; share: Share };
+
+export function Sharing({ api, id, initialPassword }: { api: PigeonApi; id: string; initialPassword: string }) {
   const { locale, t } = useBrowserLocale();
   const passwordId = useId();
+  const extraction = useRef<AbortController | null>(null);
+  const [view, setView] = useState<ShareView>({ status: 'loading' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<MessageKey | ''>('');
-  const [unavailable, setUnavailable] = useState(!share);
   const [download, setDownload] = useState<DownloadLink>();
   const [downloadRequested, setDownloadRequested] = useState(false);
-  const [password, setPassword] = useState(() => passwordFromShareLink(new URL(window.location.href)));
+  const [password, setPassword] = useState(initialPassword);
+  const share = view.status === 'ready' ? view.share : undefined;
   const filename = download?.filename ?? share?.filename;
   const sizeBytes = download?.size_bytes ?? share?.size_bytes;
   const downloadUrl = download?.download_url;
 
+  useEffect(() => setPassword(initialPassword), [initialPassword]);
+
   useEffect(() => {
-    function fillPassword() {
-      setPassword(passwordFromShareLink(new URL(window.location.href)));
-    }
-    window.addEventListener('hashchange', fillPassword);
-    return () => window.removeEventListener('hashchange', fillPassword);
-  }, []);
+    const controller = new AbortController();
+    api.shareInfo(id, controller.signal).then((details) => {
+      if (!controller.signal.aborted) setView({ status: 'ready', share: details });
+    }).catch((failure) => {
+      if (controller.signal.aborted) return;
+      setView({ status: failure instanceof ApiError && failure.status === 404 ? 'unavailable' : 'failed' });
+    });
+    return () => {
+      controller.abort();
+      // Changing the hash may unmount this page while extraction is pending.
+      extraction.current?.abort();
+    };
+  }, [api, id]);
 
   function requestDownload(url: string) {
     setDownloadRequested(true);
@@ -41,31 +54,40 @@ export function Sharing({ api, share }: { api: PigeonApi; share?: Share }) {
 
   async function extract(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!share || busy) return;
+    if (!share || extraction.current) return;
     const fields = new FormData(event.currentTarget);
     const submittedPassword = fields.get('password');
+    const controller = new AbortController();
+    extraction.current = controller;
     setBusy(true);
     setError('');
     try {
-      const result = await api.download(share.id, typeof submittedPassword === 'string' ? submittedPassword : undefined);
+      const result = await api.download(id, typeof submittedPassword === 'string' ? submittedPassword : undefined, controller.signal);
+      if (controller.signal.aborted) return;
       setDownload(result);
       // For a protected share, verification prepares the link for a separate download click.
       if (!share.requires_password) requestDownload(result.download_url);
     } catch (failure) {
+      if (controller.signal.aborted) return;
       if (failure instanceof ApiError && failure.status === 404) {
-        setUnavailable(true);
+        setView({ status: 'unavailable' });
       } else {
         setError(errorMessageKey(failure, 'downloadFailed'));
       }
     } finally {
-      setBusy(false);
+      extraction.current = null;
+      if (!controller.signal.aborted) setBusy(false);
     }
   }
 
   return (
-    <EntryLayout title={t(unavailable ? 'shareUnavailable' : 'receiveFile')}>
-      {unavailable ? (
+    <EntryLayout title={t(view.status === 'unavailable' ? 'shareUnavailable' : 'receiveFile')}>
+      {view.status === 'loading' ? (
+        <p className="subtitle" role="status">{t('reading')}</p>
+      ) : view.status === 'unavailable' ? (
         <p className="subtitle">{t('shareUnavailableDetails')}</p>
+      ) : !share ? (
+        <Alert severity="error">{t('shareLoadFailed')}</Alert>
       ) : (
         <>
           {filename && (

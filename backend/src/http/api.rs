@@ -90,7 +90,7 @@ pub async fn extract_link(
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "download_url": app.sharing_path("download", &link.token),
+            "download_url": app.download_url(&link.token),
             "expires_at": link.expires_at,
             "filename": link.filename,
             "size_bytes": link.size_bytes,

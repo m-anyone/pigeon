@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, Query, State, rejection::QueryRejection},
     http::{HeaderMap, StatusCode},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::store::{ListedShare, SharePage};
@@ -20,6 +20,31 @@ pub struct ListQuery {
     q: Option<String>,
     page: Option<u64>,
     page_size: Option<u64>,
+}
+
+#[derive(Serialize)]
+pub(super) struct ShareMetadata {
+    id: String,
+    requires_password: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    filename: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size_bytes: Option<u64>,
+}
+
+pub(super) async fn metadata(
+    State(app): State<Arc<App>>,
+    Path(id): Path<String>,
+) -> Result<Json<ShareMetadata>, HttpError> {
+    let store = app.store.clone();
+    let share = storage_work(move || store.share(&id)).await?;
+    let is_public = !share.requires_password;
+    Ok(Json(ShareMetadata {
+        id: share.id,
+        requires_password: share.requires_password,
+        filename: is_public.then_some(share.filename),
+        size_bytes: is_public.then_some(share.size_bytes),
+    }))
 }
 
 pub async fn list(
@@ -52,7 +77,7 @@ pub async fn list(
                 "expires_at": share.expires_at,
                 "remaining_downloads": share.remaining_downloads,
                 "requires_password": share.requires_password,
-                "share_url": app.sharing_path("id", &share.id),
+                "share_url": app.share_url(&share.id),
             })
         })
         .collect();

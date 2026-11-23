@@ -13,7 +13,7 @@ from smoke_release import (
     USERNAME,
     post_json,
     request,
-    sharing_value,
+    share_id_from_url,
     start_standalone,
     upload_file,
 )
@@ -99,7 +99,7 @@ def check_share_list(origin):
         filename = item["filename"]
         protected = filename == protected_file
         assert item["share_url"] == urls[filename], item
-        assert item["id"] == sharing_value(urls[filename], "id"), item
+        assert item["id"] == share_id_from_url(urls[filename]), item
         assert item["size_bytes"] == len(PAYLOAD), item
         assert item["requires_password"] is protected, item
         assert isinstance(item["created_at"], int) and item["created_at"] > 0, item
@@ -107,8 +107,7 @@ def check_share_list(origin):
         if protected:
             assert item["expires_at"] - item["created_at"] == 7 * 86400, item
 
-    deleted_url = urls[deleted_file]
-    deleted_id = sharing_value(deleted_url, "id")
+    deleted_id = share_id_from_url(urls[deleted_file])
     delete_path = f"{BASE}/api/shares/{deleted_id}"
     request(origin, delete_path, method="DELETE", status=401)
     request(
@@ -118,7 +117,7 @@ def check_share_list(origin):
     direct_url = coupon["download_url"]
     assert request(origin, direct_url)[1] == PAYLOAD
     request(origin, delete_path, method="DELETE", headers={"X-Pigeon-Token": owner}, status=204)
-    request(origin, deleted_url, status=404)
+    request(origin, delete_path, status=404)
     request(origin, direct_url, status=404)
     request(origin, delete_path, method="DELETE", headers={"X-Pigeon-Token": owner}, status=404)
     remaining = list_page(origin, owner, 1)
@@ -127,13 +126,15 @@ def check_share_list(origin):
         set(matches) - {deleted_file}
     ), remaining
 
-    protected_id = sharing_value(urls[protected_file], "id")
+    protected_id = share_id_from_url(urls[protected_file])
+    protected_path = f"{BASE}/api/shares/{protected_id}"
     post_json(
         origin,
-        f"{BASE}/api/shares/{protected_id}/download-links",
+        f"{protected_path}/download-links",
         {"password": SHARE_PASSWORD},
         status=201,
     )
+    request(origin, protected_path, status=404)
     available = list_page(origin, owner, 1)
     assert available["total"] == 1, available
     assert {item["filename"] for item in available["items"]} == (

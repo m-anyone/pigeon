@@ -2,10 +2,12 @@ use std::{fmt::Write, sync::Arc};
 
 use axum::{
     body::Body,
+    extract::{Query, State, rejection::QueryRejection},
     http::{HeaderMap, Method, StatusCode, header},
     response::Response,
 };
 use futures_util::StreamExt;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::{
     fs::File,
@@ -17,12 +19,19 @@ use crate::store::OpenDownload;
 
 use super::{App, error::HttpError, storage_work};
 
-pub async fn download(
-    app: Arc<App>,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DownloadQuery {
+    download: String,
+}
+
+pub(super) async fn download(
+    State(app): State<Arc<App>>,
     method: Method,
     headers: HeaderMap,
-    token: String,
+    query: Result<Query<DownloadQuery>, QueryRejection>,
 ) -> Result<Response, HttpError> {
+    let Query(DownloadQuery { download: token }) = query.map_err(|_| HttpError::missing())?;
     // The validator is stable for this URL and does not disclose the bearer token.
     let etag = format!("\"{:x}\"", Sha256::digest(token.as_bytes()));
     let store = app.store.clone();

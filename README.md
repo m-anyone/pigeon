@@ -18,7 +18,9 @@ pigeon --user 'alice:example-password' --port 3000
 | `--data <dir>` | 数据目录, 默认当前工作目录下的 `./pigeon-data` |
 | `--max-file-size <size>` | 单文件上传上限, 例如 `500MB` 或 `2GB`. 默认不限 |
 
-根路径部署的入口是 `/`。用 `--base-path /pigeon` 时, 入口是 `/pigeon`, 分享地址为 `/pigeon/sharing?id=...`, 爬虫规则位于 `/pigeon/robots.txt`。反向代理应保留配置的路径前缀。
+根路径部署的入口是 `/`, 登录地址为 `/#/login`, 分享地址为 `/#/sharing/<id>`. 用 `--base-path /pigeon` 时, 入口是 `/pigeon`, 登录地址为 `/pigeon#/login`, 分享地址为 `/pigeon#/sharing/<id>`, 爬虫规则位于 `/pigeon/robots.txt`. 反向代理应保留配置的路径前缀.
+
+发布的单个二进制内含一个 React HTML 入口和构建后的 JS, CSS. 浏览器按需加载登录页、上传页和分享页的代码. 分享状态由 `GET /api/shares/{id}` 返回, 分享不可用时返回 `404`. 下载直链使用 `/sharing?download=<token>`, 子路径部署时添加相应前缀.
 
 ## 分享与数据
 
@@ -32,7 +34,7 @@ pigeon --user 'alice:example-password' --port 3000
 
 登录后可从 `GET /api/config` 读取 `available_bytes` 和 `max_file_size_bytes`, 分别是数据目录所在磁盘的可用空间和单文件上传上限, 单位均为字节. 文件大小不限时, `max_file_size_bytes` 为 `null`. 前端在发送文件前校验上限, 目录上传按打包后的 ZIP 大小计算.
 
-公网请通过 HTTPS 反向代理访问. 部署者自行配置外层 HTTP Auth. 请限制数据目录权限, 并在代理日志中隐藏分享和直链查询参数. 写入时检查 256 MiB 的磁盘预留空间. 代理允许的请求大小和超时时间应与实际文件规模匹配.
+公网请通过 HTTPS 反向代理访问. 部署者自行配置外层 HTTP Auth. 请限制数据目录权限, 并在代理日志中隐藏旧分享地址和下载直链的查询参数. 写入时检查 256 MiB 的磁盘预留空间. 代理允许的请求大小和超时时间应与实际文件规模匹配.
 
 ## Docker
 

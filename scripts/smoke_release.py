@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from html.parser import HTMLParser
 from pathlib import Path
 import json
+import re
 import shutil
 import socket
 import subprocess
@@ -24,12 +25,14 @@ OPENER = build_opener(ProxyHandler({}))
 
 
 class FrontendPage(HTMLParser):
-    inline_entry = False
+    def __init__(self):
+        super().__init__()
+        self.module_sources = []
 
     def handle_starttag(self, tag, attributes):
         fields = dict(attributes)
-        if tag == "script" and fields.get("type") == "module" and "src" not in fields:
-            self.inline_entry = True
+        if tag == "script" and fields.get("type") == "module" and fields.get("src"):
+            self.module_sources.append(fields["src"])
 
 
 def request(origin, path, *, method="GET", headers=None, body=None, status=200):
@@ -64,7 +67,14 @@ def check_embedded_page(origin, path):
     page = FrontendPage()
     page.feed(body.decode())
     assert headers.get_content_type() == "text/html", path
-    assert page.inline_entry, f"{path} lacks the embedded React entry point"
+    assert page.module_sources, f"{path} lacks the embedded React entry point"
+    for source in page.module_sources:
+        parsed = urlsplit(source)
+        assert not (parsed.scheme or parsed.netloc or parsed.query or parsed.fragment), source
+        assert parsed.path.startswith(f"{BASE}/assets/") and parsed.path.endswith(".js"), source
+        headers, javascript = request(origin, source)
+        assert headers.get_content_type() == "text/javascript", source
+        assert javascript, f"{source} is empty"
 
 
 def upload_file(origin, token, *, filename="smoke.txt", fields=None):
@@ -97,13 +107,21 @@ def upload_file(origin, token, *, filename="smoke.txt", fields=None):
     return json.loads(uploaded)["share_url"]
 
 
-def sharing_value(url, key):
+def share_id_from_url(url):
+    parsed = urlsplit(url)
+    assert not (parsed.scheme or parsed.netloc or parsed.query), url
+    assert parsed.path == BASE, url
+    match = re.fullmatch(r"/sharing/([0-9a-f]{32})", parsed.fragment)
+    assert match, url
+    return match.group(1)
+
+
+def check_download_url(url):
     parsed = urlsplit(url)
     assert not (parsed.scheme or parsed.netloc or parsed.fragment), url
     assert parsed.path == f"{BASE}/sharing", url
     query = parse_qs(parsed.query, strict_parsing=True)
-    assert set(query) == {key} and len(query[key]) == 1, url
-    return query[key][0]
+    assert set(query) == {"download"} and len(query["download"]) == 1, url
 
 
 def check_release(origin):
@@ -124,20 +142,26 @@ def check_release(origin):
     assert config["max_file_size_bytes"] is None
 
     share = upload_file(origin, token)
-    share_id = sharing_value(share, "id")
-    check_embedded_page(origin, share)
+    share_id = share_id_from_url(share)
+    metadata_path = f"{BASE}/api/shares/{share_id}"
+    _, metadata = request(origin, metadata_path)
+    assert json.loads(metadata) == {"id": share_id, "requires_password": True}, metadata
+
+    request(origin, f"{BASE}/sharing?id={share_id}", status=404)
 
     extraction = post_json(
         origin,
-        f"{BASE}/api/shares/{share_id}/download-links",
+        f"{metadata_path}/download-links",
         {"password": SHARE_PASSWORD},
         status=201,
     )
 
-    # The last extraction hides the share while its temporary download still works.
-    request(origin, share, status=404)
+    # The browser fragment selects the share while its HTML shell remains available.
+    request(origin, metadata_path, status=404)
+    headers, _ = request(origin, urlsplit(share).path)
+    assert headers.get_content_type() == "text/html", share
     download_url = extraction["download_url"]
-    sharing_value(download_url, "download")
+    check_download_url(download_url)
     headers, data = request(
         origin, download_url, headers={"Range": "bytes=0-4"}, status=206
     )

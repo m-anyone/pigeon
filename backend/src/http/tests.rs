@@ -111,6 +111,41 @@ async fn applies_exact_root_paths_and_requires_session() {
 }
 
 #[tokio::test]
+async fn serves_one_html_shell_with_separate_public_share_metadata() {
+    let data = TestData::new();
+    let id = data.unprotected_share();
+    let app = data.router("/pigeon");
+
+    let home = call(&app, "GET", "/pigeon", &[], Body::empty()).await;
+    assert_eq!(home.status(), StatusCode::OK);
+    let html = to_bytes(home.into_body(), usize::MAX).await.unwrap();
+
+    let (_, meta) = std::str::from_utf8(&html)
+        .unwrap()
+        .split_once("name=\"pigeon-bootstrap\" content=\"")
+        .unwrap();
+    let (encoded, _) = meta.split_once('"').unwrap();
+    let bootstrap: Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap();
+    assert_eq!(bootstrap, json!({"base_path": "/pigeon"}));
+
+    let metadata_path = format!("/pigeon/api/shares/{id}");
+    let metadata = call(&app, "GET", &metadata_path, &[], Body::empty()).await;
+    assert_eq!(metadata.status(), StatusCode::OK);
+    assert_eq!(
+        read_json(metadata).await,
+        json!({"id": id, "requires_password": false, "filename": "test.txt", "size_bytes": FILE_BYTES.len()})
+    );
+    let sharing_path = format!("/pigeon/sharing?id={id}");
+    assert_eq!(
+        call(&app, "GET", &sharing_path, &[], Body::empty())
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
 async fn config_under_base_path_reports_and_enforces_the_upload_size_limit() {
     let data = TestData::new();
     let app = data.router_with_limit("/pigeon", Some(FILE_BYTES.len()));
@@ -295,25 +330,15 @@ async fn anonymous_download_survives_last_extraction_and_same_data_restart() {
     let upload = read_json(upload).await;
     assert!(upload["expires_at"].is_null());
     let share = upload["share_url"].as_str().unwrap();
-    let id = share.split_once("?id=").unwrap().1;
-    let extract = format!("/pigeon/api/shares/{id}/download-links");
-
-    let password_link = format!("{share}&password=P1GEON");
-    for path in [share, &password_link] {
-        let response = call(&app, "GET", path, &[], Body::empty()).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let (_, meta) = std::str::from_utf8(&body)
-            .unwrap()
-            .split_once("name=\"pigeon-bootstrap\" content=\"")
-            .unwrap();
-        let (encoded, _) = meta.split_once('"').unwrap();
-        let bootstrap: Value =
-            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap();
-        assert_eq!(bootstrap["share"]["requires_password"], true);
-        assert!(bootstrap["share"].get("filename").is_none());
-        assert!(bootstrap["share"].get("size_bytes").is_none());
-    }
+    let id = share.strip_prefix("/pigeon#/sharing/").unwrap();
+    let metadata_path = format!("/pigeon/api/shares/{id}");
+    let extract = format!("{metadata_path}/download-links");
+    let metadata = call(&app, "GET", &metadata_path, &[], Body::empty()).await;
+    assert_eq!(metadata.status(), StatusCode::OK);
+    assert_eq!(
+        read_json(metadata).await,
+        json!({"id": id, "requires_password": true})
+    );
 
     let wrong = post_json(&app, &extract, json!({"password": "wrong"})).await;
     assert_eq!(wrong.status(), StatusCode::FORBIDDEN);
@@ -334,6 +359,7 @@ async fn anonymous_download_survives_last_extraction_and_same_data_restart() {
     assert_eq!(direct["filename"], "test.txt");
     assert_eq!(direct["size_bytes"], FILE_BYTES.len());
     let direct = direct["download_url"].as_str().unwrap();
+    assert!(direct.starts_with("/pigeon/sharing?download="));
     let direct_with_password = format!("{direct}&password=P1GEON");
     assert_eq!(
         call(&app, "GET", &direct_with_password, &[], Body::empty())
@@ -342,7 +368,9 @@ async fn anonymous_download_survives_last_extraction_and_same_data_restart() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(
-        call(&app, "GET", share, &[], Body::empty()).await.status(),
+        call(&app, "GET", &metadata_path, &[], Body::empty())
+            .await
+            .status(),
         StatusCode::NOT_FOUND
     );
 

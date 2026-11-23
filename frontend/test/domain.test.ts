@@ -1,15 +1,14 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { appPath, formatBytes, formatUploadLimit, makePassword, passwordFromShareLink, readBootstrap, shareLinkWithPassword, uploadForm } from '../src/domain.ts';
+import { appPath, formatBytes, formatUploadLimit, makePassword, readBootstrap, uploadForm } from '../src/domain.ts';
+import { readRoute, shareLinkWithPassword } from '../src/routes.ts';
 
-test('loads non-ASCII sharing metadata from the backend bootstrap', () => {
-  const bootstrap = {
-    base_path: '/pigeon',
-    page: 'sharing',
-    share: { id: 'abc', filename: '信鸽.txt', requires_password: false, size_bytes: 42 },
-  };
-  assert.deepEqual(readBootstrap(Buffer.from(JSON.stringify(bootstrap)).toString('base64url')), bootstrap);
-  assert.deepEqual(readBootstrap('__PIGEON_BOOTSTRAP__'), { base_path: '/', page: 'home' });
+test('loads the base path from the backend bootstrap', () => {
+  const bootstrap = { base_path: '/pigeon/team' };
+  const encoded = Buffer.from(JSON.stringify(bootstrap)).toString('base64url');
+  assert.deepEqual(readBootstrap(encoded), bootstrap);
+  assert.deepEqual(readBootstrap('__PIGEON_BOOTSTRAP__'), { base_path: '/' });
+  assert.deepEqual(readBootstrap(null), { base_path: '/' });
 });
 
 test('keeps links inside the configured base path', () => {
@@ -18,22 +17,32 @@ test('keeps links inside the configured base path', () => {
   assert.equal(appPath('/pigeon'), '/pigeon');
 });
 
-test('includes the share password in the fragment and preserves the share ID and base path', () => {
-  const link = 'https://example.com/pigeon/sharing?id=abc';
-  const password = 'a+b&c=#';
-  const url = new URL(shareLinkWithPassword(link, password));
-  assert.equal(url.pathname, '/pigeon/sharing');
-  assert.equal(url.search, '?id=abc');
-  assert.equal(url.hash, '#password=a%2Bb%26c%3D%23');
-  assert.equal(passwordFromShareLink(url), password);
-  assert.equal(passwordFromShareLink(new URL(link)), '');
+const shareId = '0123456789abcdef0123456789abcdef';
+
+test('reads home, login and canonical sharing hash routes', () => {
+  assert.deepEqual(readRoute(''), { page: 'home' });
+  assert.deepEqual(readRoute('#/'), { page: 'home' });
+  assert.deepEqual(readRoute('#/login'), { page: 'login' });
+  assert.deepEqual(readRoute(`#/sharing/${shareId}`), { page: 'sharing', id: shareId, password: '' });
+  for (const hash of [
+    '#/login/', '#/unknown', '#password=secret', '#/sharing', '#/sharing/abc',
+    `#/sharing/${shareId.toUpperCase()}`, `#/sharing/${shareId}/`, `#/sharing/${shareId}0`,
+  ]) {
+    assert.deepEqual(readRoute(hash), { page: 'notFound' }, hash);
+  }
 });
 
-test('reads passwords from share query parameters and prioritizes the fragment', () => {
-  const url = new URL('https://example.com/sharing?id=abc&password=First2');
-  assert.equal(passwordFromShareLink(url), 'First2');
-  url.hash = '#password=Second3';
-  assert.equal(passwordFromShareLink(url), 'Second3');
+test('round-trips encoded share passwords in root and nested hash links', () => {
+  const password = 'a+b&c=#?';
+  for (const base of ['/', '/pigeon/team']) {
+    const link = `https://example.com${base}#/sharing/${shareId}`;
+    const url = new URL(shareLinkWithPassword(link, password));
+    assert.equal(url.pathname, base);
+    assert.equal(url.search, '');
+    assert.equal(url.hash, `#/sharing/${shareId}?password=a%2Bb%26c%3D%23%3F`);
+    assert.deepEqual(readRoute(url.hash), { page: 'sharing', id: shareId, password });
+    assert.equal(shareLinkWithPassword(url.href, ''), link);
+  }
 });
 
 test('omits cleared optional upload settings and sends configured values', () => {

@@ -7,8 +7,6 @@ export type Share = {
 
 export type Bootstrap = {
   base_path: string;
-  page: 'home' | 'sharing';
-  share?: Share;
 };
 
 export type UploadOptions = {
@@ -20,27 +18,16 @@ export type UploadOptions = {
 export function readBootstrap(content: string | null): Bootstrap {
   // The placeholder is intact on the standalone Vite homepage.
   if (!content || content.startsWith('__')) {
-    return { base_path: '/', page: 'home' };
+    return { base_path: '/' };
   }
   const bytes = Uint8Array.from(atob(content.replace(/-/g, '+').replace(/_/g, '/')), (code) => code.charCodeAt(0));
-  return JSON.parse(new TextDecoder().decode(bytes)) as Bootstrap;
+  const { base_path } = JSON.parse(new TextDecoder().decode(bytes)) as Bootstrap;
+  return { base_path };
 }
 
 export function appPath(basePath: string, path = '') {
   if (!path) return basePath;
   return basePath === '/' ? path : basePath + path;
-}
-
-export function shareLinkWithPassword(link: string, password: string) {
-  const url = new URL(link);
-  // The fragment keeps the password out of the initial HTTP request URL.
-  url.hash = new URLSearchParams({ password }).toString();
-  return url.href;
-}
-
-export function passwordFromShareLink(url: URL) {
-  const fragment = new URLSearchParams(url.hash.slice(1));
-  return fragment.get('password') ?? url.searchParams.get('password') ?? '';
 }
 
 export function formatBytes(bytes: number, locale = 'en') {

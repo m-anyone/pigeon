@@ -1,6 +1,6 @@
 import type { MessageKey } from './i18n.ts';
 import { appPath, uploadForm } from './domain.ts';
-import type { UploadOptions } from './domain.ts';
+import type { Share, UploadOptions } from './domain.ts';
 
 export type SharePage = {
   items: {
@@ -99,9 +99,13 @@ export function createApi(basePath: string) {
         signal.removeEventListener('abort', abort);
       }
     },
-    download(id: string, password?: string) {
+    shareInfo(id: string, signal: AbortSignal) {
+      return request<Share>(apiUrl(`/shares/${encodeURIComponent(id)}`), { signal });
+    },
+    download(id: string, password: string | undefined, signal: AbortSignal) {
       return request<DownloadLink>(
-        apiUrl(`/shares/${encodeURIComponent(id)}/download-links`), json(password ? { password } : {}),
+        apiUrl(`/shares/${encodeURIComponent(id)}/download-links`),
+        { ...json(password ? { password } : {}), signal },
       );
     },
   };
