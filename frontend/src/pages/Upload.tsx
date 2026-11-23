@@ -212,7 +212,7 @@ export function Upload({ api, token, onSessionExpired }: {
                   </label>
                   {password !== undefined && (
                     <TextField className="share-password-input" variant="outlined" size="small" type="text"
-                      required disabled={busy} value={password}
+                      required autoFocus disabled={busy} value={password}
                       onChange={(event) => setPassword(event.target.value)}
                       slotProps={{
                         htmlInput: {
