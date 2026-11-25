@@ -1,5 +1,6 @@
 use std::{error::Error, fs::File, time::Duration};
 
+use futures_util::StreamExt;
 use reqwest::{
     Body, RequestBuilder, Response, StatusCode, Url,
     header::{HeaderValue, RETRY_AFTER},
@@ -11,7 +12,7 @@ use serde_json::json;
 use tokio::io::AsyncReadExt;
 use tokio_util::io::ReaderStream;
 
-use super::ShareOptions;
+use super::{ShareOptions, progress::UploadProgress};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -101,7 +102,14 @@ impl Client {
             form = form.text("password", password.clone());
         }
         let file = tokio::fs::File::from_std(file).take(size);
-        let body = Body::wrap_stream(ReaderStream::new(file));
+        let mut progress = UploadProgress::new(size);
+        // Count file bytes as the HTTP client pulls them into the multipart body.
+        let stream = ReaderStream::new(file).inspect(move |chunk| {
+            if let Ok(bytes) = chunk {
+                progress.advance(bytes.len());
+            }
+        });
+        let body = Body::wrap_stream(stream);
         let part = Part::stream_with_length(body, size)
             .file_name(filename.to_owned())
             .mime_str("application/octet-stream")?;

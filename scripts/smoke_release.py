@@ -187,7 +187,14 @@ def check_share_cli(binary, origin):
             timeout=30,
         )
         assert process.returncode == 0, process.stderr
-        return process.stdout.splitlines()
+        links = process.stdout.splitlines()
+        if links:
+            assert re.search(
+                r"^Upload progress: 100%.*B/s", process.stderr, re.MULTILINE
+            ), process.stderr
+        else:
+            assert "Upload progress:" not in process.stderr, process.stderr
+        return links
 
     def get_share_id(url):
         assert url.startswith(f"{origin}{BASE}/#/sharing/"), url
@@ -201,7 +208,7 @@ def check_share_cli(binary, origin):
         (root / "folder" / "nested.txt").write_bytes(b"zip payload")
 
         assert run_share(CLI_ACCOUNTS[0], [filename], "\n\n\nn\n") == []
-        (url,) = run_share(CLI_ACCOUNTS[0], [filename], "\n\n\ny\n")
+        (url,) = run_share(CLI_ACCOUNTS[0], [filename], "\n\n\n\n")
         share_id = get_share_id(url)
         path = f"{BASE}/api/shares/{share_id}"
         _, body = request(origin, path)
