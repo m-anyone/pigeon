@@ -114,7 +114,7 @@ def share_id_from_url(url):
     parsed = urlsplit(url)
     assert not (parsed.scheme or parsed.netloc or parsed.query), url
     assert parsed.path == f"{BASE}/", url
-    match = re.fullmatch(r"/sharing/([0-9a-f]{32})", parsed.fragment)
+    match = re.fullmatch(r"/s/([A-Za-z0-9_-]{6})", parsed.fragment)
     assert match, url
     return match.group(1)
 
@@ -197,7 +197,7 @@ def check_share_cli(binary, origin):
         return links
 
     def get_share_id(url):
-        assert url.startswith(f"{origin}{BASE}/#/sharing/"), url
+        assert url.startswith(f"{origin}{BASE}/#/s/"), url
         return share_id_from_url(url.removeprefix(origin))
 
     with tempfile.TemporaryDirectory(prefix="pigeon-share-") as directory:
@@ -227,7 +227,7 @@ def check_share_cli(binary, origin):
             f"forever\n1\n{SHARE_PASSWORD}\ny\n",
             trailing_slash=True,
         )
-        assert url_with_password == f"{url}?password={SHARE_PASSWORD}", url_with_password
+        assert url_with_password == f"{url}?p={SHARE_PASSWORD}", url_with_password
         path = f"{BASE}/api/shares/{get_share_id(url)}"
         extraction = post_json(
             origin, f"{path}/download-links", {"password": SHARE_PASSWORD}, status=201
