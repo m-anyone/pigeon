@@ -77,15 +77,11 @@ button:focus-visible, a:focus-visible {
 }
 
 .brand-symbol {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 42px;
   height: 42px;
-  border-radius: 12px;
-  background: var(--accent);
-  box-shadow: 0 3px 7px #35495636;
+  filter: drop-shadow(0 3px 4px #35495636);
 }
-.brand-symbol svg { width: 38px; height: 38px; }
 
 .language-switcher { display: flex; width: fit-content; }
 .language-trigger { width: 40px; min-width: 0; min-height: 40px; padding: 0; }
@@ -112,8 +108,6 @@ button:focus-visible, a:focus-visible {
 .subtitle { margin: 12px 0 31px; color: var(--muted); font-size: 15px; line-height: 1.65; }
 
 .art-panel {
-  isolation: isolate;
-  position: relative;
   display: grid;
   place-items: center;
   min-width: 0;
@@ -122,18 +116,9 @@ button:focus-visible, a:focus-visible {
   background-size: 15px 15px, auto;
 }
 
-.art-panel::before {
-  z-index: -1;
-  position: absolute;
-  inset: 17px;
-  border: 1px solid #728a9954;
-  border-radius: 18px;
-  content: "";
-}
-
 .pigeon-art {
   display: block;
-  width: min(100%, 525px);
+  width: min(96%, 520px);
   height: auto;
   max-height: 100%;
   user-select: none;
@@ -261,13 +246,11 @@ button:focus-visible, a:focus-visible {
   .shell { width: calc(100% - 32px); padding-top: 18px; }
   .site-header { min-height: 43px; margin-bottom: 20px; }
   .brand { font-size: 19px; gap: 9px; }
-  .brand-symbol { width: 37px; height: 37px; border-radius: 10px; }
-  .brand-symbol svg { width: 33px; height: 33px; }
+  .brand-symbol { width: 37px; height: 37px; }
   .entry-grid { min-height: 0; grid-template-columns: 1fr; }
   .entry-shell { min-height: 100dvh; padding-block: 18px; }
   .art-panel { height: 186px; overflow: hidden; }
-  .art-panel::before { inset: 10px; border-radius: 10px; }
-  .art-panel .pigeon-art { width: 230px; max-height: none; position: absolute; top: -14px; }
+  .art-panel .pigeon-art { width: auto; max-width: 100%; max-height: 160px; }
   .entry-panel { padding: 66px 21px 30px; }
   .entry-content { width: min(100%, 360px); }
   .subtitle { margin: 8px 0 21px; font-size: 14px; }

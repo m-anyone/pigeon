@@ -1,4 +1,4 @@
-<img src="docs/pigeon.svg" alt="Pigeon logo" width="72" height="72">
+<img src="frontend/src/assets/pigeon-logo.png" alt="Pigeon logo" width="72" height="72">
 
 # Pigeon
 

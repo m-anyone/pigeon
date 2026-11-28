@@ -1,6 +1,7 @@
 """Exercise the standalone release or a container running that release."""
 
 import argparse
+from base64 import b64decode
 from contextlib import contextmanager
 from html.parser import HTMLParser
 from io import BytesIO
@@ -31,11 +32,14 @@ class FrontendPage(HTMLParser):
     def __init__(self):
         super().__init__()
         self.module_sources = []
+        self.favicon = ""
 
     def handle_starttag(self, tag, attributes):
         fields = dict(attributes)
         if tag == "script" and fields.get("type") == "module" and fields.get("src"):
             self.module_sources.append(fields["src"])
+        if tag == "link" and fields.get("rel") == "icon":
+            self.favicon = fields.get("href", "")
 
 
 def request(origin, path, *, method="GET", headers=None, body=None, status=200):
@@ -70,6 +74,11 @@ def check_embedded_page(origin, path):
     page = FrontendPage()
     page.feed(body.decode())
     assert headers.get_content_type() == "text/html", path
+    # An inline favicon works under the standalone server's data-only image CSP.
+    png_prefix = "data:image/png;base64,"
+    assert page.favicon.startswith(png_prefix), f"{path} lacks an inline PNG favicon"
+    favicon = b64decode(page.favicon.removeprefix(png_prefix), validate=True)
+    assert favicon.startswith(b"\x89PNG\r\n\x1a\n"), f"{path} has an invalid PNG favicon"
     assert page.module_sources, f"{path} lacks the embedded React entry point"
     for source in page.module_sources:
         parsed = urlsplit(source)
