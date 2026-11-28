@@ -128,12 +128,13 @@ jobs:
             [.manifests[].platform | select(.os == "linux") | .architecture]
             | sort == ["amd64", "arm64"]
           '
-      # The Docker Hub repository overview is shared by the stable and beta tags.
-      - name: Update Docker Hub overview
+      # The Docker Hub overview and description are shared by the stable and beta tags.
+      - name: Update Docker Hub overview and description
         if: steps.branch.outputs.current == 'true'
         uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
         with:
           username: ${{ vars.DOCKERHUB_USERNAME || 'mebtte' }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: mebtte/pigeon
+          short-description: Pigeon is an extremely simple file sharing service for self-hosting.
           readme-filepath: ./docker/docker.md
